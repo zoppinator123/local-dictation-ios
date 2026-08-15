@@ -33,6 +33,10 @@ final class HostSmokeTests: XCTestCase {
             "Start session missing. Hierarchy: \(app.debugDescription)"
         )
         XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "listener ready")).firstMatch.waitForExistence(timeout: 5),
+            "Loopback listener never became ready"
+        )
     }
 
     func testStartSessionDoesNotCrash() {

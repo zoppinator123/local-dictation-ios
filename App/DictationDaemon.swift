@@ -190,7 +190,10 @@ final class DictationDaemon: ObservableObject {
     private func startListener() {
         guard listener == nil else { return }
         do {
-            let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: Self.port)!)
+            let port = NWEndpoint.Port(rawValue: Self.port)!
+            let parameters = NWParameters.tcp
+            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: port)
+            let listener = try NWListener(using: parameters)
             listener.stateUpdateHandler = { [weak self] state in
                 Task { @MainActor in
                     self?.event("listener \(String(describing: state))")
