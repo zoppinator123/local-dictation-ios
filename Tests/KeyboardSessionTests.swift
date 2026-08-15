@@ -53,6 +53,20 @@ enum KeyboardSessionSuite {
         try expectEqual(session.phase, .idle)
     }
 
+    static func missingFullAccessStillRecords() async throws {
+        var session = KeyboardSession(
+            readiness: KeyboardReadiness(
+                keyboardEnabled: true,
+                fullAccessGranted: false,
+                microphoneGranted: true,
+                speechAuthorized: true
+            )
+        )
+        try expectEqual(session.phase, .idle)
+        try expect(session.handle(.beginHold))
+        try expectEqual(session.phase, .recording)
+    }
+
     private static var ready: KeyboardReadiness {
         KeyboardReadiness(
             keyboardEnabled: true,

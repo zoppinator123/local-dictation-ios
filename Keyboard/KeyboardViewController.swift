@@ -66,22 +66,22 @@ final class KeyboardViewController: UIInputViewController {
         session.applyReadiness(
             KeyboardReadiness(
                 keyboardEnabled: true,
-                fullAccessGranted: fullAccessGranted,
-                microphoneGranted: AVAudioApplication.shared.recordPermission == .granted,
-                speechAuthorized: SFSpeechRecognizer.authorizationStatus() == .authorized
+                fullAccessGranted: openAccessGranted,
+                microphoneGranted: AVAudioApplication.shared.recordPermission != .denied,
+                speechAuthorized: SFSpeechRecognizer.authorizationStatus() != .denied
             )
         )
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
     }
 
-    private var fullAccessGranted: Bool {
+    private var openAccessGranted: Bool {
         super.hasFullAccess
     }
 
     private func persistFullAccessFlag() {
         let url = appGroupDirectory.appendingPathComponent("full-access.json")
         try? FileManager.default.createDirectory(at: appGroupDirectory, withIntermediateDirectories: true)
-        try? JSONEncoder().encode(fullAccessGranted).write(to: url, options: .atomic)
+        try? JSONEncoder().encode(openAccessGranted).write(to: url, options: .atomic)
     }
 
     private func handleMicDown() {
@@ -108,16 +108,14 @@ final class KeyboardViewController: UIInputViewController {
     private func startRecording() {
         guard session.handle(.beginHold) else {
             keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
-            if !session.readiness.fullAccessGranted {
-                openHost(AppRoute.settings.url)
-            } else if !session.readiness.microphoneGranted || !session.readiness.speechAuthorized {
-                openHost(AppRoute.root.url)
-            }
             return
         }
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
         if startInKeyboardRecognition() { return }
-        session.fail(KeyboardFailure(code: "mic", message: "Microphone unavailable in the keyboard. Check Full Access."))
+        session.fail(KeyboardFailure(
+            code: "mic",
+            message: "Mic blocked. In Settings, turn Full Access off and on for Local Dictation."
+        ))
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
     }
 
@@ -128,7 +126,6 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func startInKeyboardRecognition() -> Bool {
-        guard fullAccessGranted else { return false }
         stopAudio()
         let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         guard let recognizer, recognizer.isAvailable else { return false }

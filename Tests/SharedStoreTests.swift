@@ -56,6 +56,10 @@ enum ReadinessSuite {
         try expectEqual(readiness.blockingMessage, "Allow Speech Recognition in Settings.")
         readiness.speechAuthorized = true
         try expect(readiness.isReady)
+        try expect(readiness.canAttemptRecording)
         try expectNil(readiness.blockingMessage)
+        readiness.fullAccessGranted = false
+        try expectFalse(readiness.isReady)
+        try expect(readiness.canAttemptRecording)
     }
 }

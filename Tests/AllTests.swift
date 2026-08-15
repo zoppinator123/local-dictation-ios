@@ -19,6 +19,7 @@ public func allTests() -> [RegisteredTest] {
         RegisteredTest(name: "session.cancelReturnsIdle", body: KeyboardSessionSuite.cancelReturnsIdle),
         RegisteredTest(name: "session.toggleStartsAndStops", body: KeyboardSessionSuite.toggleStartsAndStops),
         RegisteredTest(name: "session.readinessRecovery", body: KeyboardSessionSuite.readinessRecovery),
+        RegisteredTest(name: "session.missingFullAccessStillRecords", body: KeyboardSessionSuite.missingFullAccessStillRecords),
         RegisteredTest(name: "store.roundTrip", body: SharedStoreSuite.roundTrip),
         RegisteredTest(name: "store.missingFileIsIdle", body: SharedStoreSuite.missingFileIsIdle),
         RegisteredTest(name: "pipeline.insertsCleanedText", body: PipelineSuite.insertsCleanedText),

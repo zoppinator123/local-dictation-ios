@@ -27,7 +27,7 @@ final class HostSettingsController: ObservableObject {
     func refresh() {
         readiness = KeyboardReadiness(
             keyboardEnabled: Self.isKeyboardEnabled(),
-            fullAccessGranted: Self.hasFullAccess(),
+            fullAccessGranted: Self.isKeyboardEnabled(),
             microphoneGranted: AVAudioApplication.shared.recordPermission == .granted,
             speechAuthorized: SFSpeechRecognizer.authorizationStatus() == .authorized
         )
@@ -82,16 +82,5 @@ final class HostSettingsController: ObservableObject {
     private static func isKeyboardEnabled() -> Bool {
         let keyboards = UserDefaults.standard.object(forKey: "AppleKeyboards") as? [String] ?? []
         return keyboards.contains { $0.contains("LocalDictationKeyboard") || $0.contains("com.jackzoppa.LocalDictation") }
-    }
-
-    private static func hasFullAccess() -> Bool {
-        // The host app cannot read the extension's full-access switch directly.
-        // The keyboard writes this flag into the App Group after it launches.
-        let url = AppGroupPaths.containerURL()?.appendingPathComponent("full-access.json")
-        guard let url, let data = try? Data(contentsOf: url),
-              let flag = try? JSONDecoder().decode(Bool.self, from: data) else {
-            return false
-        }
-        return flag
     }
 }

@@ -61,7 +61,7 @@ public struct KeyboardSession: Equatable, Sendable {
 
     public init(readiness: KeyboardReadiness = KeyboardReadiness()) {
         self.readiness = readiness
-        if !readiness.isReady {
+        if !readiness.canAttemptRecording {
             phase = .needsSetup
         }
     }
@@ -70,7 +70,7 @@ public struct KeyboardSession: Equatable, Sendable {
         KeyboardSnapshot(
             phase: phase,
             status: status,
-            canRecord: readiness.isReady && (phase == .idle || phase == .error || phase == .needsSetup),
+            canRecord: readiness.canAttemptRecording && (phase == .idle || phase == .error || phase == .needsSetup),
             canInsert: lastTranscript?.isEmpty == false && phase != .recording,
             lastTranscript: lastTranscript,
             lastError: lastError
@@ -104,7 +104,7 @@ public struct KeyboardSession: Equatable, Sendable {
             return true
         case .cancel:
             guard phase == .recording || phase == .transcribing else { return false }
-            phase = readiness.isReady ? .idle : .needsSetup
+            phase = readiness.canAttemptRecording ? .idle : .needsSetup
             return true
         case .insertReadyTranscript:
             guard phase == .transcribing, lastTranscript?.isEmpty == false else { return false }
@@ -112,14 +112,14 @@ public struct KeyboardSession: Equatable, Sendable {
             return true
         case .dismissError:
             guard phase == .error || phase == .needsSetup else { return false }
-            phase = readiness.isReady ? .idle : .needsSetup
+            phase = readiness.canAttemptRecording ? .idle : .needsSetup
             lastError = nil
             return true
         }
     }
 
     private mutating func beginRecording() -> Bool {
-        guard readiness.isReady else {
+        guard readiness.canAttemptRecording else {
             phase = .needsSetup
             lastError = KeyboardFailure(code: "setup", message: readiness.blockingMessage ?? "Setup required")
             return false
@@ -156,10 +156,10 @@ public struct KeyboardSession: Equatable, Sendable {
 
     public mutating func applyReadiness(_ next: KeyboardReadiness) {
         readiness = next
-        if next.isReady, phase == .needsSetup {
+        if next.canAttemptRecording, phase == .needsSetup {
             phase = .idle
             lastError = nil
-        } else if !next.isReady, phase == .idle {
+        } else if !next.canAttemptRecording, phase == .idle {
             phase = .needsSetup
         }
     }

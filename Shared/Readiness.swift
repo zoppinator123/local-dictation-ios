@@ -22,6 +22,12 @@ public struct KeyboardReadiness: Equatable, Sendable {
         keyboardEnabled && fullAccessGranted && microphoneGranted && speechAuthorized
     }
 
+    /// Full Access can report false after a reinstall even when the Settings
+    /// switch is on. The keyboard may still record if mic + speech are allowed.
+    public var canAttemptRecording: Bool {
+        keyboardEnabled && microphoneGranted && speechAuthorized
+    }
+
     public var blockingMessage: String? {
         if !keyboardEnabled { return "Add Local Dictation in Settings › General › Keyboard." }
         if !fullAccessGranted { return "Turn on Allow Full Access for Local Dictation." }
