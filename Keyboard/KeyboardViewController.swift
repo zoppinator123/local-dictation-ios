@@ -164,8 +164,12 @@ final class KeyboardViewController: UIInputViewController {
         } catch {
             lastCaptureError = "live \(captureErrorText(error))"
         }
-        try await capture.startFile()
-        usingLiveCapture = false
+        do {
+            try await capture.startFile()
+            usingLiveCapture = false
+        } catch {
+            throw SpeechCaptureError.engineStartFailed("\(lastCaptureError ?? "live?") | file \(error.localizedDescription)")
+        }
     }
 
     private func captureErrorText(_ error: Error) -> String {
