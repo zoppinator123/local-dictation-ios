@@ -192,6 +192,41 @@ enum HostCaptureSuite {
         try expectEqual(session.startClip(foreground: false), .failure(.needsForegroundSession))
     }
 
+    static func stopDuringTranscribeStaysTranscribing() async throws {
+        var session = HostCaptureSession()
+        _ = session.startSession(foreground: true)
+        _ = session.startClip(foreground: false)
+        _ = session.stopClip()
+        try expectEqual(session.state.phase, .transcribing)
+        try expectEqual(session.stopClip(), .failure(.notClipping))
+        try expectEqual(session.state.phase, .transcribing)
+        try expect(session.state.micEngaged)
+    }
+
+    static func backgroundStartAfterLiveLeavesHardware() async throws {
+        var session = HostCaptureSession()
+        _ = session.startSession(foreground: true)
+        try expectEqual(session.startSession(foreground: false), .failure(.hardwareStartFromBackground))
+        try expect(session.state.micEngaged)
+        try expectEqual(session.state.phase, .live)
+    }
+
+    static func foregroundStartDuringClipIsNoop() async throws {
+        var session = HostCaptureSession()
+        _ = session.startSession(foreground: true)
+        _ = session.startClip(foreground: false)
+        try expectEqual(session.startSession(foreground: true), .success(.none))
+        try expectEqual(session.state.phase, .clipping)
+        try expect(session.state.clipOpen)
+    }
+
+    static func startClipForegroundIdleStillNeedsSession() async throws {
+        var session = HostCaptureSession()
+        try expectEqual(session.startClip(foreground: true), .failure(.needsForegroundSession))
+        try expectNil(session.state.lastError)
+        try expectFalse(session.state.micEngaged)
+    }
+
     static func stopFromIdleDoesNotArm() async throws {
         var session = HostCaptureSession()
         try expectEqual(session.stopClip(), .failure(.notClipping))

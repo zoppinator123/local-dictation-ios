@@ -100,6 +100,10 @@ public struct HostCaptureSession: Equatable, Sendable {
     }
 
     public mutating func stopClip() -> Result<HostCaptureCommand, HostCaptureError> {
+        if state.phase == .transcribing {
+            lastCommand = .none
+            return .failure(.notClipping)
+        }
         guard state.phase == .clipping, state.clipOpen else {
             lastCommand = .none
             state.clipOpen = false

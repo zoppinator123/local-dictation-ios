@@ -95,8 +95,13 @@ final class KeyboardViewController: UIInputViewController {
     private var connecting = false
 
     private func handleMicTap() {
+        if connecting {
+            captureToken = UUID()
+            connecting = false
+            keyboardView?.apply(session.snapshot, holdToTalk: false)
+            return
+        }
         refreshSession()
-        if connecting { return }
         if session.phase == .recording {
             stopRecording()
         } else if session.phase == .transcribing {

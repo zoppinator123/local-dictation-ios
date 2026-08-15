@@ -23,6 +23,7 @@ final class DictationDaemon: ObservableObject {
     private let clipBox = AudioFileWriterBox()
     private let speechBox = SpeechBox()
     private var retainTask: UIBackgroundTaskIdentifier = .invalid
+    private var commandBusy = false
 
     private init() {}
 
@@ -220,8 +221,17 @@ final class DictationDaemon: ObservableObject {
     }
 
     private func handle(_ request: String) async -> String {
+        let route = HostCaptureRoute.parseHTTP(request)
+        if route == .health {
+            return json(["ok": true, "listening": isListening, "armed": isArmed])
+        }
+        if commandBusy {
+            return json(["ok": false, "error": "Busy. Tap again."])
+        }
+        commandBusy = true
+        defer { commandBusy = false }
         do {
-            switch HostCaptureRoute.parseHTTP(request) {
+            switch route {
             case .health:
                 return json(["ok": true, "listening": isListening, "armed": isArmed])
             case .start:

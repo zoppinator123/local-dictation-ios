@@ -58,5 +58,9 @@ public func allTests() -> [RegisteredTest] {
         RegisteredTest(name: "host.finishAfterMicOff", body: HostCaptureSuite.finishAfterMicOffStaysIdle),
         RegisteredTest(name: "host.twoTakeCycle", body: HostCaptureSuite.fullTapCycleTwice),
         RegisteredTest(name: "host.stopFromIdle", body: HostCaptureSuite.stopFromIdleDoesNotArm),
+        RegisteredTest(name: "host.stopDuringTranscribe", body: HostCaptureSuite.stopDuringTranscribeStaysTranscribing),
+        RegisteredTest(name: "host.bgStartKeepsHardware", body: HostCaptureSuite.backgroundStartAfterLiveLeavesHardware),
+        RegisteredTest(name: "host.startDuringClipNoop", body: HostCaptureSuite.foregroundStartDuringClipIsNoop),
+        RegisteredTest(name: "host.fgClipStillNeedsSession", body: HostCaptureSuite.startClipForegroundIdleStillNeedsSession),
     ]
 }
