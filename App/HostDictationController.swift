@@ -13,6 +13,7 @@ final class HostDictationController: ObservableObject {
     private let capture = SpeechCaptureEngine()
     private var recognizer: SFSpeechRecognizer?
     private var task: SFSpeechRecognitionTask?
+    private var meterTask: Task<Void, Never>?
     private var store: FileSharedDictationStore {
         let url = AppGroupPaths.payloadURL() ?? FileManager.default.temporaryDirectory.appendingPathComponent(AppGroupPaths.payloadFileName)
         return FileSharedDictationStore(fileURL: url)
@@ -27,16 +28,18 @@ final class HostDictationController: ObservableObject {
         stopEngine()
         isRecording = true
         partialText = ""
-        statusTitle = "Listening…"
+        statusTitle = "Listening… tap Stop when you are done."
         do {
             try await capture.startFile()
             try store.save(SharedDictationPayload(status: .recording, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
+            watchSilence()
         } catch {
             fail(nsErrorText(error))
         }
     }
 
     func stop() {
+        meterTask?.cancel()
         isRecording = false
         transcribe(url: capture.stop())
     }
@@ -85,7 +88,7 @@ final class HostDictationController: ObservableObject {
         let cleaned = TranscriptPipeline(options: CleanupOptions(style: settings.style)).process(raw, vocabulary: vocabulary)
         try? store.save(SharedDictationPayload(status: .ready, transcript: cleaned, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
         UIPasteboard.general.string = ClipboardDictation.encode(cleaned)
-        statusTitle = "Saved. Switch back to the previous app."
+        statusTitle = "Saved. Switch back to Messages — text will insert."
         isRecording = false
         partialText = cleaned
         stopEngine()
@@ -98,7 +101,36 @@ final class HostDictationController: ObservableObject {
         stopEngine()
     }
 
+    private func watchSilence() {
+        meterTask?.cancel()
+        meterTask = Task { @MainActor in
+            var heardSpeech = false
+            var quietTicks = 0
+            var ticks = 0
+            while !Task.isCancelled, isRecording {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                ticks += 1
+                let power = capture.averagePower()
+                if power > -32 {
+                    heardSpeech = true
+                    quietTicks = 0
+                } else if heardSpeech {
+                    quietTicks += 1
+                }
+                if heardSpeech, quietTicks >= 15 {
+                    stop()
+                    return
+                }
+                if ticks >= 200 {
+                    stop()
+                    return
+                }
+            }
+        }
+    }
+
     private func stopEngine() {
+        meterTask?.cancel()
         task?.cancel()
         capture.stopAndDelete()
         task = nil

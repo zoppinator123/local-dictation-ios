@@ -68,6 +68,11 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
         try startRecorder()
     }
 
+    public func averagePower() -> Float {
+        recorder?.updateMeters()
+        return recorder?.averagePower(forChannel: 0) ?? -160
+    }
+
     public func endAudio() {
         request?.endAudio()
     }
@@ -233,6 +238,7 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
             AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
         ]
         let recorder = try AVAudioRecorder(url: url, settings: settings)
+        recorder.isMeteringEnabled = true
         guard recorder.prepareToRecord() else {
             throw SpeechCaptureError.engineStartFailed("prepareToRecord failed")
         }

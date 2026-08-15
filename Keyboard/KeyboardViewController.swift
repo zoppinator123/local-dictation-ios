@@ -127,9 +127,7 @@ final class KeyboardViewController: UIInputViewController {
                 }
             } catch {
                 guard self.captureToken == token else { return }
-                self.lastCaptureError = self.captureErrorText(error)
-                self.session.fail(KeyboardFailure(code: "mic", message: self.lastCaptureError ?? "Microphone failed"))
-                self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                self.handOffToHost()
             }
         }
     }
@@ -163,13 +161,17 @@ final class KeyboardViewController: UIInputViewController {
             return
         } catch {
             lastCaptureError = "live \(captureErrorText(error))"
+            throw error
         }
-        do {
-            try await capture.startFile()
-            usingLiveCapture = false
-        } catch {
-            throw SpeechCaptureError.engineStartFailed("\(lastCaptureError ?? "live?") | file \(error.localizedDescription)")
-        }
+    }
+
+    private func handOffToHost() {
+        capture.stopAndDelete()
+        usingLiveCapture = false
+        _ = session.handle(.cancel)
+        session.fail(KeyboardFailure(code: "handoff", message: "Speak in Local Dictation, then return here."))
+        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        openHost(AppRoute.dictate.url)
     }
 
     private func captureErrorText(_ error: Error) -> String {
@@ -267,13 +269,25 @@ final class KeyboardViewController: UIInputViewController {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
             while let self, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 700_000_000)
+                try? await Task.sleep(nanoseconds: 300_000_000)
                 await MainActor.run { self.consumeSharedTranscriptIfNeeded() }
             }
         }
     }
 
     private func openHost(_ url: URL) {
+        if let context = extensionContext {
+            context.open(url) { [weak self] success in
+                if !success {
+                    self?.openViaResponder(url)
+                }
+            }
+            return
+        }
+        openViaResponder(url)
+    }
+
+    private func openViaResponder(_ url: URL) {
         var responder: UIResponder? = self
         while let current = responder {
             if let application = current as? UIApplication {
@@ -282,7 +296,6 @@ final class KeyboardViewController: UIInputViewController {
             }
             responder = current.next
         }
-        extensionContext?.open(url)
     }
 
     private func loadSettings() -> KeyboardSettings {

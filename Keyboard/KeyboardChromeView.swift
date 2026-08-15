@@ -67,7 +67,9 @@ final class KeyboardChromeView: UIView {
         switch snapshot.phase {
         case .recording: title = "  Listening…"
         case .transcribing: title = "  Transcribing…"
-        case .needsSetup, .error: title = "  Setup"
+        case .needsSetup: title = "  Setup"
+        case .error:
+            title = snapshot.lastError?.code == "handoff" ? "  Return after speaking" : "  Setup"
         default: title = holdToTalk ? "  Hold to talk" : "  Tap to talk"
         }
         micButton.setTitle(title, for: .normal)
