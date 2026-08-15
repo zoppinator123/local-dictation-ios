@@ -109,12 +109,15 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
-        do {
-            try capture.start()
-        } catch {
-            lastCaptureError = nsErrorText(error)
-            session.fail(KeyboardFailure(code: "mic", message: lastCaptureError ?? "Microphone failed"))
-            keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.capture.start()
+            } catch {
+                self.lastCaptureError = error.localizedDescription
+                self.session.fail(KeyboardFailure(code: "mic", message: self.lastCaptureError ?? "Microphone failed"))
+                self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+            }
         }
     }
 

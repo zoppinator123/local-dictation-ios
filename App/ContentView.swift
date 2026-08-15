@@ -24,7 +24,10 @@ struct ContentView: View {
             .navigationTitle("Local Dictation")
             .background(Color(.systemGroupedBackground))
         }
-        .onAppear { store.refresh() }
+        .onAppear {
+            store.refresh()
+            Task { await store.requestPermissions() }
+        }
         .onOpenURL { url in
             store.refresh()
             if url.absoluteString.hasPrefix(AppRoute.dictate.rawValue) {

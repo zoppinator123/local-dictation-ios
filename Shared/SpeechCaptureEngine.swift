@@ -15,36 +15,48 @@ public enum SpeechCaptureError: Error, Equatable, LocalizedError {
     }
 }
 
-/// File-based capture. Keyboard appexes cannot start AVAudioEngine
-/// (no output node / hwFormat). AVAudioRecorder only needs a record session.
+/// File-based capture for keyboard appexes. Do not use AVAudioEngine here:
+/// a keyboard cannot initialize an output node.
 public final class SpeechCaptureEngine: @unchecked Sendable {
     private var recorder: AVAudioRecorder?
     private var fileURL: URL?
 
     public init() {}
 
-    public func start() throws {
+    public func start() async throws {
         stopAndDelete()
 
         #if os(iOS)
-        try activateRecordSession()
+        let granted = await requestMicPermission()
+        guard granted else {
+            throw SpeechCaptureError.engineStartFailed("Allow Microphone in the Local Dictation app, then try again.")
+        }
+        try activateMixedRecordSession()
         #endif
 
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("local-dictation-\(UUID().uuidString).wav")
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let url = directory.appendingPathComponent("local-dictation-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: 16_000,
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100,
             AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
         do {
             let recorder = try AVAudioRecorder(url: url, settings: settings)
             recorder.isMeteringEnabled = false
-            guard recorder.prepareToRecord(), recorder.record() else {
+            guard recorder.prepareToRecord() else {
+                throw SpeechCaptureError.engineStartFailed("Recorder prepare failed")
+            }
+            guard recorder.record() else {
+                #if os(iOS)
+                let perm = String(describing: AVAudioApplication.shared.recordPermission)
+                let category = AVAudioSession.sharedInstance().category.rawValue
+                throw SpeechCaptureError.engineStartFailed("record() false perm=\(perm) session=\(category)")
+                #else
                 throw SpeechCaptureError.engineStartFailed("Microphone did not start")
+                #endif
             }
             self.recorder = recorder
             self.fileURL = url
@@ -74,14 +86,36 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
     }
 
     #if os(iOS)
-    private func activateRecordSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.record, mode: .default, options: [])
-            try session.setActive(true)
-        } catch {
-            throw SpeechCaptureError.engineStartFailed(nsErrorText(error))
+    private func requestMicPermission() async -> Bool {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted:
+            return true
+        case .denied:
+            return false
+        default:
+            return await AVAudioApplication.requestRecordPermission()
         }
+    }
+
+    private func activateMixedRecordSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        var lastError: Error?
+        let attempts: [(AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)] = [
+            (.playAndRecord, .spokenAudio, [.mixWithOthers, .duckOthers, .defaultToSpeaker]),
+            (.playAndRecord, .default, [.mixWithOthers, .defaultToSpeaker]),
+            (.record, .default, [.mixWithOthers, .duckOthers]),
+            (.record, .measurement, []),
+        ]
+        for (category, mode, options) in attempts {
+            do {
+                try session.setCategory(category, mode: mode, options: options)
+                try session.setActive(true)
+                return
+            } catch {
+                lastError = error
+            }
+        }
+        throw SpeechCaptureError.engineStartFailed(nsErrorText(lastError ?? SpeechCaptureError.engineStartFailed("Audio session failed")))
     }
     #endif
 }
@@ -92,10 +126,4 @@ public func nsErrorText(_ error: Error) -> String {
         return error.localizedDescription
     }
     return "\(ns.domain) \(ns.code): \(error.localizedDescription)"
-}
-
-/// Kept so older call sites compile; unused by the recorder path.
-public protocol SFSpeechBufferAppending: AnyObject, Sendable {
-    func append(_ buffer: AVAudioPCMBuffer)
-    func endAudio()
 }

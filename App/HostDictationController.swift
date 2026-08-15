@@ -19,16 +19,16 @@ final class HostDictationController: ObservableObject {
 
     func startFromURL() {
         isActive = true
-        start()
+        Task { await start() }
     }
 
-    func start() {
+    func start() async {
         stopEngine()
         isRecording = true
         partialText = ""
         statusTitle = "Listening…"
         do {
-            try capture.start()
+            try await capture.start()
             try store.save(SharedDictationPayload(status: .recording, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
         } catch {
             fail(nsErrorText(error))
