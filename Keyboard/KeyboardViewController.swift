@@ -92,8 +92,11 @@ final class KeyboardViewController: UIInputViewController {
 
     private func handleMicUp() {}
 
+    private var connecting = false
+
     private func handleMicTap() {
         refreshSession()
+        if connecting { return }
         if session.phase == .recording {
             stopRecording()
         } else if session.phase == .transcribing {
@@ -104,22 +107,27 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func startRecording() {
-        guard session.handle(.beginHold) else {
-            keyboardView?.apply(session.snapshot, holdToTalk: false)
-            return
-        }
-        keyboardView?.apply(session.snapshot, holdToTalk: false)
+        connecting = true
         lastCaptureError = nil
         usingLiveCapture = false
         let token = UUID()
         captureToken = token
+        keyboardView?.setPartial("Starting…")
         Task { [weak self] in
             guard let self else { return }
+            defer { self.connecting = false }
             do {
                 try await DictationClient.start()
-                if self.captureToken != token {
+                guard self.captureToken == token else {
                     _ = try? await DictationClient.stop()
+                    return
                 }
+                guard self.session.handle(.beginHold) else {
+                    _ = try? await DictationClient.stop()
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
+                    return
+                }
+                self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
             } catch {
                 guard self.captureToken == token else { return }
                 self.session.fail(KeyboardFailure(code: "mic", message: self.friendlyMicError(error)))
@@ -185,6 +193,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func stopRecording() {
         captureToken = UUID()
+        connecting = false
         _ = session.handle(.endHold)
         keyboardView?.apply(session.snapshot, holdToTalk: false)
         Task { [weak self] in
@@ -292,6 +301,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func turnMicOff() {
         captureToken = UUID()
+        connecting = false
         if session.phase == .recording {
             _ = session.handle(.cancel)
         }
