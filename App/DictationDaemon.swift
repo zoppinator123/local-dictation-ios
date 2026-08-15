@@ -24,12 +24,15 @@ final class DictationDaemon: ObservableObject {
     private init() {}
 
     func start() {
-        startSessionAndEngine()
+        startSessionAndEngine(forceRebuild: true)
         startListener()
     }
 
     func startRecording() async throws {
-        startSessionAndEngine()
+        startSessionAndEngine(forceRebuild: false)
+        if nativeInputFormat() == nil {
+            startSessionAndEngine(forceRebuild: true)
+        }
         guard let engine else {
             throw SpeechCaptureError.engineStartFailed("Audio engine is not running. Open Local Dictation and leave it open.")
         }
@@ -44,17 +47,10 @@ final class DictationDaemon: ObservableObject {
             tapInstalled = false
         }
 
-        let input = engine.inputNode
-        let format = input.inputFormat(forBus: 0)
-        guard format.channelCount > 0, format.sampleRate > 0 else {
-            throw SpeechCaptureError.engineStartFailed("Microphone input is not ready.")
-        }
-
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-dictation-\(UUID().uuidString).caf")
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        let writer = AudioFileWriter(file: file)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        let writer = AudioFileWriter(url: url)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
             writer.write(buffer)
         }
         tapInstalled = true
@@ -175,28 +171,53 @@ final class DictationDaemon: ObservableObject {
         return text
     }
 
-    private func startSessionAndEngine() {
+    private func nativeInputFormat() -> AVAudioFormat? {
+        guard let engine else { return nil }
+        let input = engine.inputNode
+        let hardware = input.inputFormat(forBus: 0)
+        if hardware.channelCount > 0, hardware.sampleRate > 0 { return hardware }
+        let output = input.outputFormat(forBus: 0)
+        if output.channelCount > 0, output.sampleRate > 0 { return output }
+        return nil
+    }
+
+    private func startSessionAndEngine(forceRebuild: Bool) {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+        try? session.setPreferredSampleRate(48_000)
         try? session.setActive(true)
 
-        if let engine, engine.isRunning { return }
+        if !forceRebuild, let engine, engine.isRunning, nativeInputFormat() != nil { return }
+
+        if tapInstalled, let engine {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        keepAlivePlayer?.stop()
+        engine?.stop()
+        keepAlivePlayer = nil
+        engine = nil
 
         let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
-        let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1)!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000)!
-        buffer.frameLength = 8_000
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.connect(engine.inputNode, to: engine.mainMixerNode, format: nil)
         engine.mainMixerNode.outputVolume = 0.001
         engine.prepare()
         do {
             try engine.start()
-            player.scheduleBuffer(buffer, at: nil, options: .loops)
-            player.play()
+            let hw = engine.mainMixerNode.outputFormat(forBus: 0)
+            if hw.sampleRate > 0, hw.channelCount > 0 {
+                let player = AVAudioPlayerNode()
+                engine.attach(player)
+                engine.connect(player, to: engine.mainMixerNode, format: hw)
+                let frames = AVAudioFrameCount(max(hw.sampleRate / 2, 512))
+                if let buffer = AVAudioPCMBuffer(pcmFormat: hw, frameCapacity: frames) {
+                    buffer.frameLength = frames
+                    player.scheduleBuffer(buffer, at: nil, options: .loops)
+                    player.play()
+                    keepAlivePlayer = player
+                }
+            }
             self.engine = engine
-            keepAlivePlayer = player
         } catch {
             NSLog("DictationDaemon engine start failed: \(error)")
         }
@@ -211,17 +232,21 @@ final class DictationDaemon: ObservableObject {
 }
 
 private final class AudioFileWriter: @unchecked Sendable {
-    private let file: AVAudioFile
+    private let url: URL
+    private var file: AVAudioFile?
     private let lock = NSLock()
 
-    init(file: AVAudioFile) {
-        self.file = file
+    init(url: URL) {
+        self.url = url
     }
 
     func write(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         defer { lock.unlock() }
-        try? file.write(from: buffer)
+        if file == nil {
+            file = try? AVAudioFile(forWriting: url, settings: buffer.format.settings)
+        }
+        try? file?.write(from: buffer)
     }
 }
 
