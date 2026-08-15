@@ -10,7 +10,7 @@ settings:
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1"
     GENERATE_INFOPLIST_FILE: NO
-    MARKETING_VERSION: "0.1.25"
+    MARKETING_VERSION: "0.1.26"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: Q4MSNRURZ4
     CODE_SIGN_STYLE: Automatic
@@ -84,6 +84,8 @@ targets:
         CFBundleName: Local Dictation
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSMicrophoneUsageDescription: Local Dictation records your voice so it can insert text in the current app.
         NSSpeechRecognitionUsageDescription: Local Dictation uses Apple Speech Recognition to convert what you say into text. Recognition may use Apple servers.
         NSExtension:

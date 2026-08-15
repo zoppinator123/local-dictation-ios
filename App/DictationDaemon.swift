@@ -147,6 +147,7 @@ final class DictationDaemon: ObservableObject {
         let input = engine.inputNode
         let hardware = input.outputFormat(forBus: 0)
         guard hardware.channelCount > 0, hardware.sampleRate > 0 else {
+            try? audio.setActive(false, options: .notifyOthersOnDeactivation)
             throw SpeechCaptureError.engineStartFailed("Microphone input is not ready.")
         }
         self.engine = engine
