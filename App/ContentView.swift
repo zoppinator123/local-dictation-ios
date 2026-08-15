@@ -31,8 +31,8 @@ struct ContentView: View {
         }
         .onOpenURL { url in
             store.refresh()
-            if url.absoluteString.hasPrefix(AppRoute.dictate.rawValue) {
-                hostDictation.startFromURL()
+            if url.absoluteString.hasPrefix(AppRoute.dictate.rawValue) || url.absoluteString.hasPrefix(AppRoute.root.rawValue) {
+                DictationDaemon.shared.start()
             }
         }
         .alert("Microphone and Speech", isPresented: $store.showingPermissionAlert) {
@@ -109,8 +109,9 @@ struct ContentView: View {
             Text(store.settings.style.detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Toggle("Hold to talk", isOn: $store.settings.holdToTalk)
-                .onChange(of: store.settings.holdToTalk) { _, _ in store.save() }
+            Text("Tap the mic to start. Tap again to insert the transcript.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding()
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
@@ -147,7 +148,7 @@ struct ContentView: View {
                 .font(.headline)
             labeled("1", "Open Messages, Mail, Slack, Notes, or any app with a text field.")
             labeled("2", "Hold the globe key and switch to Local Dictation.")
-            labeled("3", "Tap or hold the microphone, speak, then release.")
+            labeled("3", "Tap the microphone, speak, then tap again to insert.")
             labeled("4", "Cleaned text is inserted at the cursor. Use the letter keys if you need to edit.")
         }
         .padding()

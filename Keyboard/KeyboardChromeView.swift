@@ -15,7 +15,7 @@ final class KeyboardChromeView: UIView {
     private let micButton = UIButton(type: .system)
     private let stack = UIStackView()
     private var shifted = false
-    private var holdToTalk = true
+    private var holdToTalk = false
     private let letterRows = [
         ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
         ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
@@ -45,9 +45,8 @@ final class KeyboardChromeView: UIView {
         micButton.setImage(UIImage(systemName: "mic.circle.fill"), for: .normal)
         micButton.tintColor = .systemRed
         micButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
-        micButton.setTitle("  Hold to talk", for: .normal)
-        micButton.addTarget(self, action: #selector(micDown), for: .touchDown)
-        micButton.addTarget(self, action: #selector(micUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        micButton.setTitle("  Tap to talk", for: .normal)
+        micButton.addTarget(self, action: #selector(micTapped), for: .touchUpInside)
         micButton.heightAnchor.constraint(equalToConstant: 52).isActive = true
         stack.addArrangedSubview(micButton)
 
@@ -65,12 +64,12 @@ final class KeyboardChromeView: UIView {
         micButton.tintColor = snapshot.phase == .recording ? .systemGreen : .systemRed
         let title: String
         switch snapshot.phase {
-        case .recording: title = "  Listening…"
+        case .recording: title = "  Listening… tap to insert"
         case .transcribing: title = "  Transcribing…"
         case .needsSetup: title = "  Setup"
         case .error:
-            title = snapshot.lastError?.code == "handoff" ? "  Return after speaking" : "  Setup"
-        default: title = holdToTalk ? "  Hold to talk" : "  Tap to talk"
+            title = snapshot.lastError?.code == "handoff" ? "  Open app, then tap again" : "  Setup"
+        default: title = "  Tap to talk"
         }
         micButton.setTitle(title, for: .normal)
     }
@@ -79,12 +78,8 @@ final class KeyboardChromeView: UIView {
         statusLabel.text = text
     }
 
-    @objc private func micDown() {
-        if holdToTalk { onMicDown?() } else { onMicTap?() }
-    }
-
-    @objc private func micUp() {
-        if holdToTalk { onMicUp?() }
+    @objc private func micTapped() {
+        onMicTap?()
     }
 
     private func makeLetterRow(_ letters: [String], includeShift: Bool, includeDelete: Bool) -> UIStackView {

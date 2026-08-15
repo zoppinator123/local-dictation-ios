@@ -78,7 +78,7 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
     }
 
     @discardableResult
-    public func stop() -> URL? {
+    public func stop(deactivateSession: Bool = true) -> URL? {
         request?.endAudio()
         #if os(iOS)
         if let audioQueue {
@@ -102,13 +102,15 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
         recorder = nil
         fileURL = nil
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if deactivateSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         #endif
         return url
     }
 
     public func stopAndDelete() {
-        let url = stop()
+        let url = stop(deactivateSession: false)
         if let url {
             try? FileManager.default.removeItem(at: url)
         }
@@ -223,19 +225,19 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
     }
 
     private func startRecorder() throws {
-        #if os(iOS)
-        let rate = AVAudioSession.sharedInstance().sampleRate
-        let sampleRate = rate > 0 ? rate : 44_100
-        #else
-        let sampleRate = 44_100.0
-        #endif
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("local-dictation-\(UUID().uuidString).caf")
+            .appendingPathComponent("local-dictation-\(UUID().uuidString).wav")
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setPreferredSampleRate(16_000)
+        #endif
+        let sampleRate = 16_000.0
         let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: sampleRate,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
         ]
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder.isMeteringEnabled = true
@@ -243,7 +245,7 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
             throw SpeechCaptureError.engineStartFailed("prepareToRecord failed")
         }
         guard recorder.record() else {
-            throw SpeechCaptureError.engineStartFailed("record() false rate=\(Int(sampleRate))")
+            throw SpeechCaptureError.engineStartFailed("Microphone did not start")
         }
         self.recorder = recorder
         self.fileURL = url

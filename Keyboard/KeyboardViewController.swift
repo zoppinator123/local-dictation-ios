@@ -74,7 +74,7 @@ final class KeyboardViewController: UIInputViewController {
                 speechAuthorized: SFSpeechRecognizer.authorizationStatus() != .denied
             )
         )
-        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        keyboardView?.apply(session.snapshot, holdToTalk: false)
     }
 
     private var openAccessGranted: Bool {
@@ -87,22 +87,16 @@ final class KeyboardViewController: UIInputViewController {
         try? JSONEncoder().encode(openAccessGranted).write(to: url, options: .atomic)
     }
 
-    private func handleMicDown() {
-        refreshSession()
-        guard loadSettings().holdToTalk else { return }
-        startRecording()
-    }
+    private func handleMicDown() {}
 
-    private func handleMicUp() {
-        guard loadSettings().holdToTalk, session.phase == .recording else { return }
-        stopRecording()
-    }
+    private func handleMicUp() {}
 
     private func handleMicTap() {
         refreshSession()
-        if loadSettings().holdToTalk { return }
         if session.phase == .recording {
             stopRecording()
+        } else if session.phase == .transcribing {
+            return
         } else {
             startRecording()
         }
@@ -110,10 +104,10 @@ final class KeyboardViewController: UIInputViewController {
 
     private func startRecording() {
         guard session.handle(.beginHold) else {
-            keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+            keyboardView?.apply(session.snapshot, holdToTalk: false)
             return
         }
-        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        keyboardView?.apply(session.snapshot, holdToTalk: false)
         lastCaptureError = nil
         usingLiveCapture = false
         let token = UUID()
@@ -130,7 +124,7 @@ final class KeyboardViewController: UIInputViewController {
                 } catch {
                     guard self.captureToken == token else { return }
                     self.session.fail(KeyboardFailure(code: "mic", message: error.localizedDescription))
-                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
                     return
                 }
             }
@@ -161,7 +155,7 @@ final class KeyboardViewController: UIInputViewController {
                         self.keyboardView?.setPartial(result.bestTranscription.formattedString)
                     } else if let error, self.session.phase == .transcribing {
                         self.session.fail(KeyboardFailure(code: "speech", message: nsErrorText(error)))
-                        self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                        self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
                     }
                 }
             }
@@ -176,9 +170,9 @@ final class KeyboardViewController: UIInputViewController {
         capture.stopAndDelete()
         usingLiveCapture = false
         _ = session.handle(.cancel)
-        session.fail(KeyboardFailure(code: "handoff", message: "Speak in Local Dictation, then return here."))
-        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
-        openHost(AppRoute.dictate.url)
+        session.fail(KeyboardFailure(code: "handoff", message: "Open Local Dictation once, then tap the mic again."))
+        keyboardView?.apply(session.snapshot, holdToTalk: false)
+        openHost(AppRoute.root.url)
     }
 
     private func captureErrorText(_ error: Error) -> String {
@@ -189,7 +183,7 @@ final class KeyboardViewController: UIInputViewController {
     private func stopRecording() {
         captureToken = UUID()
         _ = session.handle(.endHold)
-        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        keyboardView?.apply(session.snapshot, holdToTalk: false)
         Task { [weak self] in
             guard let self else { return }
             if await DictationClient.health() {
@@ -198,7 +192,7 @@ final class KeyboardViewController: UIInputViewController {
                     self.completeTranscription(text)
                 } catch {
                     self.session.fail(KeyboardFailure(code: "speech", message: error.localizedDescription))
-                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
                 }
                 return
             }
@@ -213,14 +207,14 @@ final class KeyboardViewController: UIInputViewController {
     private func transcribeFile(_ url: URL?) {
         guard let url else {
             session.fail(KeyboardFailure(code: "mic", message: lastCaptureError ?? "No audio captured"))
-            keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+            keyboardView?.apply(session.snapshot, holdToTalk: false)
             return
         }
         let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         guard let recognizer else {
             try? FileManager.default.removeItem(at: url)
             session.fail(KeyboardFailure(code: "speech", message: "Speech recognizer unavailable"))
-            keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+            keyboardView?.apply(session.snapshot, holdToTalk: false)
             return
         }
         self.recognizer = recognizer
@@ -234,7 +228,7 @@ final class KeyboardViewController: UIInputViewController {
                     self.completeTranscription(result.bestTranscription.formattedString)
                 } else if let error {
                     self.session.fail(KeyboardFailure(code: "speech", message: nsErrorText(error)))
-                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
                 }
             }
         }
@@ -252,7 +246,7 @@ final class KeyboardViewController: UIInputViewController {
             insertDictation(text)
             session.finishInsertion()
         }
-        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        keyboardView?.apply(session.snapshot, holdToTalk: false)
     }
 
     private func insertDictation(_ text: String) {
@@ -282,7 +276,7 @@ final class KeyboardViewController: UIInputViewController {
             UIPasteboard.general.string = ""
             session.finishInsertion()
         }
-        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        keyboardView?.apply(session.snapshot, holdToTalk: false)
     }
 
     private func startPollingSharedStore() {

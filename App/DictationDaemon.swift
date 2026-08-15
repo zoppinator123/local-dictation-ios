@@ -32,6 +32,7 @@ final class DictationDaemon: ObservableObject {
             self?.endBackgroundTask()
         }
         stopKeepAliveAudio()
+        try await Task.sleep(nanoseconds: 150_000_000)
         try await capture.startFile()
         isListening = true
     }
@@ -41,7 +42,7 @@ final class DictationDaemon: ObservableObject {
             isListening = false
             startKeepAlive()
         }
-        guard let url = capture.stop() else {
+        guard let url = capture.stop(deactivateSession: false) else {
             throw SpeechCaptureError.engineStartFailed("No audio captured")
         }
         let text = try await transcribe(url: url)

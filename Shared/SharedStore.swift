@@ -89,7 +89,7 @@ public struct KeyboardSettings: Codable, Equatable, Sendable {
     public var style: WritingStyle
     public var holdToTalk: Bool
 
-    public init(style: WritingStyle = .polished, holdToTalk: Bool = true) {
+    public init(style: WritingStyle = .polished, holdToTalk: Bool = false) {
         self.style = style
         self.holdToTalk = holdToTalk
     }
