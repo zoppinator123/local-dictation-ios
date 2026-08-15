@@ -6,6 +6,8 @@ struct ContentView: View {
     @StateObject private var store = HostSettingsController()
     @StateObject private var hostDictation = HostDictationController()
     @ObservedObject private var daemon = DictationDaemon.shared
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var hasBackgrounded = false
 
     var body: some View {
         NavigationStack {
@@ -19,6 +21,7 @@ struct ContentView: View {
                     styleCard
                     vocabularyCard
                     howToCard
+                    diagnosticsCard
                 }
                 .padding()
             }
@@ -49,12 +52,35 @@ struct ContentView: View {
                 DictationDaemon.shared.start()
             }
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                hasBackgrounded = true
+            } else if phase == .active, hasBackgrounded {
+                hasBackgrounded = false
+                daemon.shutdownAudio()
+            }
+        }
         .alert("Microphone and Speech", isPresented: $store.showingPermissionAlert) {
             Button("Open Settings") { store.openSettings() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Local Dictation needs Microphone and Speech Recognition to turn speech into text on this iPhone.")
         }
+    }
+
+    private var diagnosticsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Diagnostics").font(.headline)
+            Text(daemon.events.suffix(12).joined(separator: "\n"))
+                .font(.system(.caption2, design: .monospaced))
+                .textSelection(.enabled)
+            if daemon.events.isEmpty {
+                Text("No events yet.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.background, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var header: some View {

@@ -14,6 +14,7 @@ final class DictationDaemon: ObservableObject {
     @Published private(set) var isArmed = false
     @Published private(set) var isListening = false
     @Published private(set) var lastError: String?
+    @Published private(set) var events: [String] = []
 
     private var session = HostCaptureSession()
     private var listener: NWListener?
@@ -24,15 +25,18 @@ final class DictationDaemon: ObservableObject {
     private let speechBox = SpeechBox()
     private var retainTask: UIBackgroundTaskIdentifier = .invalid
     private var commandBusy = false
+    private let networkQueue = DispatchQueue(label: "com.jackzoppa.LocalDictation.listener", qos: .userInitiated)
 
     private init() {}
 
     func start() {
+        event("daemon start")
         startListener()
         retainInBackground()
     }
 
     func primeSession() {
+        event("Start session tapped")
         startListener()
         retainInBackground()
         if engine?.isRunning != true || !tapInstalled {
@@ -42,6 +46,7 @@ final class DictationDaemon: ObservableObject {
     }
 
     func shutdownAudio() {
+        event("OFF requested")
         commandBusy = false
         _ = session.micOff()
         speechBox.cancel()
@@ -59,6 +64,7 @@ final class DictationDaemon: ObservableObject {
     }
 
     func startRecording() async throws {
+        event("/start received engine=\(engine?.isRunning == true) tap=\(tapInstalled)")
         guard engine?.isRunning == true, tapInstalled else {
             if session.state.micEngaged {
                 _ = session.micOff()
@@ -83,6 +89,7 @@ final class DictationDaemon: ObservableObject {
     }
 
     func stopRecording() async throws -> String {
+        event("/stop received")
         switch session.stopClip() {
         case .failure:
             publish()
@@ -210,13 +217,20 @@ final class DictationDaemon: ObservableObject {
         guard listener == nil else { return }
         do {
             let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: Self.port)!)
-            listener.newConnectionHandler = { [weak self] connection in
-                connection.start(queue: .main)
+            listener.stateUpdateHandler = { [weak self] state in
                 Task { @MainActor in
+                    self?.event("listener \(String(describing: state))")
+                    if case .failed = state { self?.listener = nil }
+                }
+            }
+            listener.newConnectionHandler = { [weak self] connection in
+                connection.start(queue: self?.networkQueue ?? .global(qos: .userInitiated))
+                Task { @MainActor in
+                    self?.event("connection accepted")
                     self?.serve(connection)
                 }
             }
-            listener.start(queue: .main)
+            listener.start(queue: networkQueue)
             self.listener = listener
         } catch {
             NSLog("DictationDaemon listen failed: \(error)")
@@ -230,6 +244,8 @@ final class DictationDaemon: ObservableObject {
                 return
             }
             Task { @MainActor in
+                let route = HostCaptureRoute.parseHTTP(request)
+                self.event("request \(route.rawValue)")
                 let body = await self.handle(request)
                 let response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)".utf8)
                 connection.send(content: response, completion: .contentProcessed { _ in
@@ -281,6 +297,15 @@ final class DictationDaemon: ObservableObject {
             return #"{"ok":false,"error":"json"}"#
         }
         return text
+    }
+
+    private func event(_ message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let line = "\(formatter.string(from: Date()))  \(message)"
+        events.append(line)
+        if events.count > 30 { events.removeFirst(events.count - 30) }
+        NSLog("LocalDictation: \(line)")
     }
 
     private func endRetain() {
