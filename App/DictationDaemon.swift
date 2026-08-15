@@ -20,6 +20,7 @@ final class DictationDaemon: ObservableObject {
     private var tapInstalled = false
     private var clipURL: URL?
     private let clipBox = AudioFileWriterBox()
+    private let speechBox = SpeechBox()
     private var retainTask: UIBackgroundTaskIdentifier = .invalid
 
     private init() {}
@@ -43,6 +44,7 @@ final class DictationDaemon: ObservableObject {
 
     func shutdownAudio() {
         clipBox.clear()
+        speechBox.cancel()
         clipURL = nil
         isListening = false
         removeTap()
@@ -65,6 +67,7 @@ final class DictationDaemon: ObservableObject {
         let writer = AudioFileWriter(url: url)
         clipURL = url
         clipBox.setWriter(writer)
+        speechBox.begin()
         isListening = true
     }
 
@@ -73,14 +76,15 @@ final class DictationDaemon: ObservableObject {
         clipBox.clear()
         clipURL = nil
         isListening = false
-        guard let url else { return "" }
-        try? await Task.sleep(nanoseconds: 150_000_000)
-        guard FileManager.default.fileExists(atPath: url.path),
-              (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0 > 44 else {
-            try? FileManager.default.removeItem(at: url)
-            return ""
+        let live = await speechBox.finish(timeout: 2.5)
+        if !live.isEmpty {
+            try? url.map { try? FileManager.default.removeItem(at: $0) }
+            UIPasteboard.general.string = ClipboardDictation.encode(live)
+            return live
         }
-        let text = try await transcribe(url: url)
+        guard let url else { return "" }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let text = (try? await transcribeOffMain(url: url)) ?? ""
         try? FileManager.default.removeItem(at: url)
         if !text.isEmpty {
             UIPasteboard.general.string = ClipboardDictation.encode(text)
@@ -124,8 +128,9 @@ final class DictationDaemon: ObservableObject {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [clipBox] buffer, _ in
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [clipBox, speechBox] buffer, _ in
             clipBox.write(buffer)
+            speechBox.append(buffer)
         }
         tapInstalled = true
     }
@@ -137,26 +142,10 @@ final class DictationDaemon: ObservableObject {
         }
     }
 
-    private func transcribe(url: URL) async throws -> String {
-        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent)
-            ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-        guard let recognizer else {
-            throw SpeechCaptureError.engineStartFailed("Speech recognizer unavailable")
-        }
-        let request = SFSpeechURLRecognitionRequest(url: url)
-        request.requiresOnDeviceRecognition = false
-        return try await withCheckedThrowingContinuation { continuation in
-            let box = ResumeBox()
-            recognizer.recognitionTask(with: request) { result, error in
-                if let result, result.isFinal {
-                    guard box.finish() else { return }
-                    continuation.resume(returning: result.bestTranscription.formattedString)
-                } else if let error {
-                    guard box.finish() else { return }
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
+    private func transcribeOffMain(url: URL) async throws -> String {
+        try await Task.detached {
+            try await transcribeURL(url)
+        }.value
     }
 
     private func startListener() {
@@ -283,6 +272,113 @@ private final class AudioFileWriter: @unchecked Sendable {
     }
 
     private(set) var hasData = false
+}
+
+private final class SpeechBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var latest = ""
+    private var isFinal = false
+
+    func begin() {
+        cancel()
+        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent)
+            ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        guard let recognizer else { return }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = false
+        lock.lock()
+        self.request = request
+        latest = ""
+        isFinal = false
+        lock.unlock()
+        task = recognizer.recognitionTask(with: request) { [weak self] result, _ in
+            guard let self, let result else { return }
+            self.lock.lock()
+            self.latest = result.bestTranscription.formattedString
+            if result.isFinal { self.isFinal = true }
+            self.lock.unlock()
+        }
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        let request = request
+        lock.unlock()
+        request?.append(buffer)
+    }
+
+    func finish(timeout: TimeInterval) async -> String {
+        endRequest()
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if snapshot().done {
+                let text = snapshot().text
+                cancel()
+                return text
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let text = snapshot().text
+        cancel()
+        return text
+    }
+
+    private func endRequest() {
+        lock.lock()
+        request?.endAudio()
+        lock.unlock()
+    }
+
+    private func snapshot() -> (done: Bool, text: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (isFinal, latest)
+    }
+
+    func cancel() {
+        lock.lock()
+        request?.endAudio()
+        task?.cancel()
+        request = nil
+        task = nil
+        isFinal = false
+        lock.unlock()
+    }
+}
+
+private func transcribeURL(_ url: URL) async throws -> String {
+    try await withThrowingTaskGroup(of: String.self) { group in
+        group.addTask {
+            let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent)
+                ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+            guard let recognizer else { return "" }
+            let request = SFSpeechURLRecognitionRequest(url: url)
+            request.requiresOnDeviceRecognition = false
+            return try await withCheckedThrowingContinuation { continuation in
+                let box = ResumeBox()
+                recognizer.recognitionTask(with: request) { result, error in
+                    if let result, result.isFinal {
+                        guard box.finish() else { return }
+                        continuation.resume(returning: result.bestTranscription.formattedString)
+                    } else if let error {
+                        guard box.finish() else { return }
+                        continuation.resume(returning: "")
+                        _ = error
+                    }
+                }
+            }
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: 6_000_000_000)
+            return ""
+        }
+        let first = try await group.next() ?? ""
+        group.cancelAll()
+        return first
+    }
 }
 
 private final class ResumeBox: @unchecked Sendable {

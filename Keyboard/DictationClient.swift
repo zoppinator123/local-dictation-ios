@@ -17,7 +17,7 @@ enum DictationClient {
     }
 
     static func stop() async throws -> String {
-        let response = try await send(path: "/stop", timeout: 20)
+        let response = try await send(path: "/stop", timeout: 8)
         guard response.ok else {
             throw SpeechCaptureError.engineStartFailed(response.error ?? "Session stop failed")
         }
