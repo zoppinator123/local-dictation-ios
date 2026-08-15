@@ -68,7 +68,7 @@ final class KeyboardChromeView: UIView {
         case .transcribing: title = "  Transcribing…"
         case .needsSetup: title = "  Setup"
         case .error:
-            title = snapshot.lastError?.code == "handoff" ? "  Open app, then tap again" : "  Setup"
+            title = "  Tap to retry"
         default: title = "  Tap to talk"
         }
         micButton.setTitle(title, for: .normal)

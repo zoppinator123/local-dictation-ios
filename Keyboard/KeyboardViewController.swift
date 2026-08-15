@@ -123,7 +123,7 @@ final class KeyboardViewController: UIInputViewController {
                     return
                 } catch {
                     guard self.captureToken == token else { return }
-                    self.session.fail(KeyboardFailure(code: "mic", message: error.localizedDescription))
+                    self.session.fail(KeyboardFailure(code: "mic", message: self.friendlyMicError(error)))
                     self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
                     return
                 }
@@ -173,6 +173,14 @@ final class KeyboardViewController: UIInputViewController {
         session.fail(KeyboardFailure(code: "handoff", message: "Open Local Dictation once, then tap the mic again."))
         keyboardView?.apply(session.snapshot, holdToTalk: false)
         openHost(AppRoute.root.url)
+    }
+
+    private func friendlyMicError(_ error: Error) -> String {
+        let text = error.localizedDescription + " " + nsErrorText(error)
+        if text.contains("560557684") || text.contains("!int") {
+            return "Leave Local Dictation open, then tap the mic again."
+        }
+        return error.localizedDescription
     }
 
     private func captureErrorText(_ error: Error) -> String {

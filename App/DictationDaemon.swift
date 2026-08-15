@@ -32,8 +32,8 @@ final class DictationDaemon: ObservableObject {
             self?.endBackgroundTask()
         }
         stopKeepAliveAudio()
-        try await Task.sleep(nanoseconds: 150_000_000)
-        try await capture.startFile()
+        try await Task.sleep(nanoseconds: 80_000_000)
+        try await capture.startFile(reuseExistingSession: true)
         isListening = true
     }
 

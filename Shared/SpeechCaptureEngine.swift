@@ -60,10 +60,12 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
     }
 
     @MainActor
-    public func startFile() async throws {
+    public func startFile(reuseExistingSession: Bool = false) async throws {
         stopAndDelete()
         #if os(iOS)
-        try await prepareSession()
+        if !reuseExistingSession {
+            try await prepareSession()
+        }
         #endif
         try startRecorder()
     }
@@ -276,9 +278,8 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
     private func activateMixedRecordSession() throws {
         let session = AVAudioSession.sharedInstance()
         let attempts: [(AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)] = [
-            (.record, .default, [.mixWithOthers, .duckOthers]),
-            (.record, .measurement, [.mixWithOthers]),
             (.playAndRecord, .default, [.mixWithOthers, .defaultToSpeaker]),
+            (.playAndRecord, .measurement, [.mixWithOthers]),
         ]
         var lastError: Error?
         for (category, mode, options) in attempts {
