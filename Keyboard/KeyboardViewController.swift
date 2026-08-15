@@ -2,14 +2,11 @@ import AVFoundation
 import Speech
 import UIKit
 
-extension SFSpeechAudioBufferRecognitionRequest: SFSpeechBufferAppending {}
-
 final class KeyboardViewController: UIInputViewController {
     private var session = KeyboardSession()
     private var keyboardView: KeyboardChromeView?
     private let capture = SpeechCaptureEngine()
     private var recognizer: SFSpeechRecognizer?
-    private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var pollTask: Task<Void, Never>?
     private var lastInsertedGeneration: UInt64 = 0
@@ -112,55 +109,49 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
-        if startInKeyboardRecognition() { return }
-        session.fail(KeyboardFailure(code: "mic", message: lastCaptureError ?? "Microphone failed"))
-        keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        do {
+            try capture.start()
+        } catch {
+            lastCaptureError = nsErrorText(error)
+            session.fail(KeyboardFailure(code: "mic", message: lastCaptureError ?? "Microphone failed"))
+            keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        }
     }
 
     private func stopRecording() {
         _ = session.handle(.endHold)
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
-        capture.endAudio()
+        transcribeFile(capture.stop())
     }
 
-    private func startInKeyboardRecognition() -> Bool {
-        lastCaptureError = nil
-        stopAudio()
+    private func transcribeFile(_ url: URL?) {
+        guard let url else {
+            session.fail(KeyboardFailure(code: "mic", message: lastCaptureError ?? "No audio captured"))
+            keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+            return
+        }
         let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         guard let recognizer else {
-            lastCaptureError = "Speech recognizer unavailable"
-            return false
-        }
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = false
-        do {
-            try capture.start(appending: request)
-        } catch {
-            lastCaptureError = error.localizedDescription
-            stopAudio()
-            return false
+            try? FileManager.default.removeItem(at: url)
+            session.fail(KeyboardFailure(code: "speech", message: "Speech recognizer unavailable"))
+            keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+            return
         }
         self.recognizer = recognizer
-        self.request = request
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        request.requiresOnDeviceRecognition = false
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
+                defer { try? FileManager.default.removeItem(at: url) }
                 guard let self else { return }
                 if let result, result.isFinal {
                     self.completeTranscription(result.bestTranscription.formattedString)
-                } else if error != nil, self.session.phase == .transcribing || self.session.phase == .recording {
-                    if let text = result?.bestTranscription.formattedString, !text.isEmpty {
-                        self.completeTranscription(text)
-                    } else if self.session.phase == .transcribing {
-                        self.session.fail(KeyboardFailure(code: "speech", message: error?.localizedDescription ?? "Transcription failed"))
-                        self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
-                    }
-                } else if let result {
-                    self.keyboardView?.setPartial(result.bestTranscription.formattedString)
+                } else if let error {
+                    self.session.fail(KeyboardFailure(code: "speech", message: nsErrorText(error)))
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
                 }
             }
         }
-        return true
     }
 
     private func completeTranscription(_ raw: String) {
@@ -235,8 +226,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func stopAudio() {
         task?.cancel()
-        capture.stop()
-        request = nil
+        capture.stopAndDelete()
         task = nil
     }
 }

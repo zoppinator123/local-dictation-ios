@@ -2,8 +2,6 @@ import AVFoundation
 import Foundation
 import Speech
 
-extension SFSpeechAudioBufferRecognitionRequest: SFSpeechBufferAppending {}
-
 @MainActor
 final class HostDictationController: ObservableObject {
     @Published var isActive = false
@@ -13,7 +11,6 @@ final class HostDictationController: ObservableObject {
 
     private let capture = SpeechCaptureEngine()
     private var recognizer: SFSpeechRecognizer?
-    private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var store: FileSharedDictationStore {
         let url = AppGroupPaths.payloadURL() ?? FileManager.default.temporaryDirectory.appendingPathComponent(AppGroupPaths.payloadFileName)
@@ -30,45 +27,17 @@ final class HostDictationController: ObservableObject {
         isRecording = true
         partialText = ""
         statusTitle = "Listening…"
-
-        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-        self.recognizer = recognizer
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        if recognizer?.supportsOnDeviceRecognition == true {
-            request.requiresOnDeviceRecognition = true
-        }
-        self.request = request
-
         do {
-            try capture.start(appending: request)
+            try capture.start()
             try store.save(SharedDictationPayload(status: .recording, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
         } catch {
-            fail(error.localizedDescription)
-            return
-        }
-
-        task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in
-                guard let self else { return }
-                if let result {
-                    self.partialText = result.bestTranscription.formattedString
-                    if result.isFinal {
-                        self.finish(result.bestTranscription.formattedString)
-                    }
-                } else if let error {
-                    self.fail(error.localizedDescription)
-                }
-            }
+            fail(nsErrorText(error))
         }
     }
 
     func stop() {
-        capture.endAudio()
         isRecording = false
-        if !partialText.isEmpty {
-            finish(partialText)
-        }
+        transcribe(url: capture.stop())
     }
 
     func reset() {
@@ -76,6 +45,34 @@ final class HostDictationController: ObservableObject {
         isActive = false
         isRecording = false
         partialText = ""
+    }
+
+    private func transcribe(url: URL?) {
+        guard let url else {
+            fail("No audio captured")
+            return
+        }
+        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        self.recognizer = recognizer
+        guard let recognizer else {
+            fail("Speech recognizer unavailable")
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        request.requiresOnDeviceRecognition = false
+        statusTitle = "Transcribing…"
+        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            Task { @MainActor in
+                defer { try? FileManager.default.removeItem(at: url) }
+                guard let self else { return }
+                if let result, result.isFinal {
+                    self.finish(result.bestTranscription.formattedString)
+                } else if let error {
+                    self.fail(nsErrorText(error))
+                }
+            }
+        }
     }
 
     private func finish(_ raw: String) {
@@ -101,8 +98,7 @@ final class HostDictationController: ObservableObject {
 
     private func stopEngine() {
         task?.cancel()
-        capture.stop()
-        request = nil
+        capture.stopAndDelete()
         task = nil
     }
 }
