@@ -311,7 +311,13 @@ final class KeyboardViewController: UIInputViewController {
             _ = session.handle(.cancel)
         }
         keyboardView?.apply(session.snapshot, holdToTalk: false)
-        Task { await DictationClient.turnOff() }
+        Task { [weak self] in
+            guard let self else { return }
+            let turnedOff = await DictationClient.turnOff()
+            if !turnedOff {
+                self.openHost(AppRoute.root.url)
+            }
+        }
     }
 
     private func openHost(_ url: URL) {

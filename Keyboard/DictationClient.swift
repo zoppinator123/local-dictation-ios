@@ -36,8 +36,9 @@ enum DictationClient {
         return response.text ?? ""
     }
 
-    static func turnOff() async {
-        _ = try? await send(path: "/off", timeout: 5)
+    static func turnOff() async -> Bool {
+        guard let response = try? await send(path: "/off", timeout: 5) else { return false }
+        return response.ok
     }
 
     private static func send(path: String, timeout: TimeInterval) async throws -> Response {

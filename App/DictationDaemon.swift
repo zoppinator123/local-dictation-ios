@@ -54,8 +54,8 @@ final class DictationDaemon: ObservableObject {
         engine = nil
         endRetain()
         let audio = AVAudioSession.sharedInstance()
-        try? audio.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
         try? audio.setActive(false, options: .notifyOthersOnDeactivation)
+        try? audio.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
         publish()
     }
 
