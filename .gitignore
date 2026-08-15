@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+.DS_Store
+dist/
+*.ipa
+*.dSYM
+.env
+.env.*

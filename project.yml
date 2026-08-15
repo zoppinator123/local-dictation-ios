@@ -1,0 +1,76 @@
+name: LocalDictationIOS
+options:
+  bundleIdPrefix: com.jackzoppa
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    GENERATE_INFOPLIST_FILE: NO
+targets:
+  LocalDictation:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+          - LocalDictation.entitlements
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jackzoppa.LocalDictation
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/LocalDictation.entitlements
+        PRODUCT_NAME: LocalDictation
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+    entitlements:
+      path: App/LocalDictation.entitlements
+    dependencies:
+      - target: LocalDictationKeyboard
+        embed: true
+    info:
+      path: App/Info.plist
+  LocalDictationKeyboard:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Keyboard
+        excludes:
+          - Info.plist
+          - LocalDictationKeyboard.entitlements
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jackzoppa.LocalDictation.keyboard
+        INFOPLIST_FILE: Keyboard/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Keyboard/LocalDictationKeyboard.entitlements
+        PRODUCT_NAME: LocalDictationKeyboard
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SKIP_INSTALL: YES
+    entitlements:
+      path: Keyboard/LocalDictationKeyboard.entitlements
+    info:
+      path: Keyboard/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: true
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+schemes:
+  LocalDictation:
+    build:
+      targets:
+        LocalDictation: all
+        LocalDictationKeyboard: all
+    run:
+      config: Debug
