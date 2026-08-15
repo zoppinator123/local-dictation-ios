@@ -5,6 +5,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var store = HostSettingsController()
     @StateObject private var hostDictation = HostDictationController()
+    @ObservedObject private var daemon = DictationDaemon.shared
 
     var body: some View {
         NavigationStack {
@@ -72,10 +73,17 @@ struct ContentView: View {
                 Button("Open Keyboard Settings") { store.openKeyboardSettings() }
             }
             .buttonStyle(.bordered)
-            Button("Turn microphone off") {
-                DictationDaemon.shared.shutdownAudio()
+            Button(daemon.isArmed ? "End session (turns mic off)" : "Start session") {
+                if daemon.isArmed {
+                    daemon.shutdownAudio()
+                } else {
+                    daemon.primeSession()
+                }
             }
             .buttonStyle(.borderedProminent)
+            Text(daemon.isArmed ? "Session live. Orange mic is expected. Switch to Messages and tap the keyboard mic." : "Open this app to start a session first.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding()
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
@@ -152,7 +160,7 @@ struct ContentView: View {
                 .font(.headline)
             labeled("1", "Open Messages, Mail, Slack, Notes, or any app with a text field.")
             labeled("2", "Hold the globe key and switch to Local Dictation.")
-            labeled("3", "Tap the microphone, speak, then tap again to insert.")
+            labeled("3", "Orange mic means the session is live. Tap the keyboard mic, speak, tap again.")
             labeled("4", "Cleaned text is inserted at the cursor. Use the letter keys if you need to edit.")
         }
         .padding()
