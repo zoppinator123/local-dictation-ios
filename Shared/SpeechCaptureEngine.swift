@@ -17,8 +17,11 @@ public enum SpeechCaptureError: Error, Equatable, LocalizedError {
 
 /// Owns AVAudioEngine off the main actor. Swift 6 traps if a MainActor
 /// type receives the realtime tap callback.
+///
+/// Keyboard appexes cannot initialize an output node. Create the engine
+/// only after a record-only session is active, then never touch outputNode.
 public final class SpeechCaptureEngine: @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private var request: SFSpeechBufferAppending?
     private var tapInstalled = false
 
@@ -29,16 +32,21 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
         self.request = request
 
         #if os(iOS)
-        try activateSession()
+        try activateRecordSession()
         #endif
 
+        let engine = AVAudioEngine()
+        self.engine = engine
         let input = engine.inputNode
         let format = usableFormat(for: input)
+        guard let format else {
+            stop()
+            throw SpeechCaptureError.invalidInputFormat
+        }
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
         }
         tapInstalled = true
-        engine.prepare()
         do {
             try engine.start()
         } catch {
@@ -53,35 +61,31 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
 
     public func stop() {
         request?.endAudio()
-        if tapInstalled {
+        if tapInstalled, let engine {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
-        if engine.isRunning {
+        if let engine, engine.isRunning {
             engine.stop()
         }
+        engine = nil
         request = nil
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
     }
 
     #if os(iOS)
-    private func activateSession() throws {
+    private func activateRecordSession() throws {
         let session = AVAudioSession.sharedInstance()
-        var lastError: Error?
-        let attempts: [(AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)] = [
-            (.playAndRecord, .spokenAudio, [.duckOthers, .allowBluetooth]),
-            (.record, .measurement, [.duckOthers]),
-            (.playAndRecord, .default, [.mixWithOthers]),
-        ]
-        for (category, mode, options) in attempts {
-            do {
-                try session.setCategory(category, mode: mode, options: options)
-                try session.setActive(true, options: .notifyOthersOnDeactivation)
-                return
-            } catch {
-                lastError = error
-            }
+        do {
+            try session.setCategory(.record, mode: .measurement, options: [])
+            try session.setPreferredSampleRate(16_000)
+            try session.setPreferredIOBufferDuration(0.02)
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            throw SpeechCaptureError.engineStartFailed(error.localizedDescription)
         }
-        throw SpeechCaptureError.engineStartFailed(lastError?.localizedDescription ?? "Audio session failed")
     }
     #endif
 
@@ -94,7 +98,7 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
         if output.channelCount > 0, output.sampleRate > 0 {
             return output
         }
-        return nil
+        return AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)
     }
 }
 
