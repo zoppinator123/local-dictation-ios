@@ -13,6 +13,7 @@ final class KeyboardViewController: UIInputViewController {
     private var task: SFSpeechRecognitionTask?
     private var pollTask: Task<Void, Never>?
     private var lastInsertedGeneration: UInt64 = 0
+    private var lastCaptureError: String?
 
     private var appGroupDirectory: URL {
         AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory
@@ -112,10 +113,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
         if startInKeyboardRecognition() { return }
-        session.fail(KeyboardFailure(
-            code: "mic",
-            message: "Mic blocked. In Settings, turn Full Access off and on for Local Dictation."
-        ))
+        session.fail(KeyboardFailure(code: "mic", message: lastCaptureError ?? "Microphone failed"))
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
     }
 
@@ -126,17 +124,20 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func startInKeyboardRecognition() -> Bool {
+        lastCaptureError = nil
         stopAudio()
         let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-        guard let recognizer, recognizer.isAvailable else { return false }
+        guard let recognizer else {
+            lastCaptureError = "Speech recognizer unavailable"
+            return false
+        }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
+        request.requiresOnDeviceRecognition = false
         do {
             try capture.start(appending: request)
         } catch {
+            lastCaptureError = error.localizedDescription
             stopAudio()
             return false
         }

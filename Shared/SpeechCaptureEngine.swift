@@ -29,24 +29,16 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
         self.request = request
 
         #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            throw SpeechCaptureError.engineStartFailed(error.localizedDescription)
-        }
+        try activateSession()
         #endif
 
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.channelCount > 0, format.sampleRate > 0 else {
-            throw SpeechCaptureError.invalidInputFormat
-        }
+        let format = usableFormat(for: input)
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
         }
         tapInstalled = true
+        engine.prepare()
         do {
             try engine.start()
         } catch {
@@ -69,6 +61,40 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
             engine.stop()
         }
         request = nil
+    }
+
+    #if os(iOS)
+    private func activateSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        var lastError: Error?
+        let attempts: [(AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)] = [
+            (.playAndRecord, .spokenAudio, [.duckOthers, .allowBluetooth]),
+            (.record, .measurement, [.duckOthers]),
+            (.playAndRecord, .default, [.mixWithOthers]),
+        ]
+        for (category, mode, options) in attempts {
+            do {
+                try session.setCategory(category, mode: mode, options: options)
+                try session.setActive(true, options: .notifyOthersOnDeactivation)
+                return
+            } catch {
+                lastError = error
+            }
+        }
+        throw SpeechCaptureError.engineStartFailed(lastError?.localizedDescription ?? "Audio session failed")
+    }
+    #endif
+
+    private func usableFormat(for input: AVAudioInputNode) -> AVAudioFormat? {
+        let hardware = input.inputFormat(forBus: 0)
+        if hardware.channelCount > 0, hardware.sampleRate > 0 {
+            return hardware
+        }
+        let output = input.outputFormat(forBus: 0)
+        if output.channelCount > 0, output.sampleRate > 0 {
+            return output
+        }
+        return nil
     }
 }
 
