@@ -13,10 +13,8 @@ final class DictationDaemon: ObservableObject {
     @Published private(set) var isListening = false
 
     private var listener: NWListener?
-    private var engine: AVAudioEngine?
-    private var tapInstalled = false
+    private var recorder: AVAudioRecorder?
     private var fileURL: URL?
-    private var fileWriter: AudioFileWriter?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     private init() {}
@@ -30,11 +28,8 @@ final class DictationDaemon: ObservableObject {
     }
 
     private func teardownCapture(deactivateSession: Bool) {
-        removeTap()
-        engine?.stop()
-        engine?.reset()
-        engine = nil
-        fileWriter = nil
+        recorder?.stop()
+        recorder = nil
         fileURL = nil
         isListening = false
         endBackgroundTask()
@@ -48,7 +43,6 @@ final class DictationDaemon: ObservableObject {
         let attempts: [AVAudioSession.CategoryOptions] = [
             [.mixWithOthers, .defaultToSpeaker],
             [.mixWithOthers],
-            [.mixWithOthers, .duckOthers],
         ]
         var lastError: Error?
         for options in attempts {
@@ -74,50 +68,61 @@ final class DictationDaemon: ObservableObject {
 
         try activateSessionForRecording()
 
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let hardware = input.outputFormat(forBus: 0)
-        if hardware.channelCount > 0, hardware.sampleRate > 0 {
-            engine.connect(input, to: engine.mainMixerNode, format: hardware)
+        let session = AVAudioSession.sharedInstance()
+        let rates = [session.sampleRate, 44_100.0, 16_000.0].filter { $0 > 0 }
+        var lastError: Error?
+        for rate in rates {
+            do {
+                try beginRecorder(sampleRate: rate)
+                isListening = true
+                return
+            } catch {
+                lastError = error
+            }
         }
-        engine.mainMixerNode.outputVolume = 0
-        engine.prepare()
-        try engine.start()
-        self.engine = engine
+        throw SpeechCaptureError.engineStartFailed(lastError?.localizedDescription ?? "Microphone did not start")
+    }
 
+    private func beginRecorder(sampleRate: Double) throws {
+        recorder?.stop()
+        recorder = nil
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("local-dictation-\(UUID().uuidString).caf")
-        let writer = AudioFileWriter(url: url)
-        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
-            writer.write(buffer)
+            .appendingPathComponent("local-dictation-\(UUID().uuidString).wav")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        recorder.isMeteringEnabled = true
+        guard recorder.prepareToRecord() else {
+            throw SpeechCaptureError.engineStartFailed("prepareToRecord failed")
         }
-        tapInstalled = true
+        guard recorder.record() else {
+            throw SpeechCaptureError.engineStartFailed("Microphone did not start")
+        }
+        self.recorder = recorder
         fileURL = url
-        fileWriter = writer
-        isListening = true
     }
 
     func stopRecording() async throws -> String {
+        recorder?.stop()
+        let url = fileURL
+        recorder = nil
+        fileURL = nil
         defer { shutdownAudio() }
-        removeTap()
-        fileWriter = nil
-        guard let url = fileURL else {
+        guard let url else {
             throw SpeechCaptureError.engineStartFailed("No audio captured")
         }
-        fileURL = nil
         let text = try await transcribe(url: url)
         try? FileManager.default.removeItem(at: url)
         if !text.isEmpty {
             UIPasteboard.general.string = ClipboardDictation.encode(text)
         }
         return text
-    }
-
-    private func removeTap() {
-        if tapInstalled, let engine {
-            engine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
-        }
     }
 
     private func transcribe(url: URL) async throws -> String {
@@ -216,25 +221,6 @@ final class DictationDaemon: ObservableObject {
             UIApplication.shared.endBackgroundTask(backgroundTask)
             backgroundTask = .invalid
         }
-    }
-}
-
-private final class AudioFileWriter: @unchecked Sendable {
-    private let url: URL
-    private var file: AVAudioFile?
-    private let lock = NSLock()
-
-    init(url: URL) {
-        self.url = url
-    }
-
-    func write(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
-        defer { lock.unlock() }
-        if file == nil {
-            file = try? AVAudioFile(forWriting: url, settings: buffer.format.settings)
-        }
-        try? file?.write(from: buffer)
     }
 }
 

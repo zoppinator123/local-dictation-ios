@@ -177,7 +177,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private func friendlyMicError(_ error: Error) -> String {
         let text = error.localizedDescription + " " + nsErrorText(error)
-        if text.contains("560557684") || text.contains("!int") {
+        if text.contains("560557684") || text.contains("!int") || text.contains("avfaudi") || text.contains("coreaudio") {
             return "Leave Local Dictation open, then tap the mic again."
         }
         return error.localizedDescription
