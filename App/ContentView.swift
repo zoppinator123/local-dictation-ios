@@ -81,9 +81,14 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(daemon.isArmed ? .red : .accentColor)
-            Text(daemon.isArmed ? "Mic is on. Switch to Messages and tap the keyboard mic. Opening this app again also turns the mic off." : "Tap Start session, then switch to Messages. Don't swipe this app away.")
+            Text(daemon.isArmed ? "Mic is on. Switch to Messages. Don't tap this app icon again or the mic turns off." : "Tap Start session first. The button must turn red.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let error = daemon.lastError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
         .padding()
         .background(.background, in: RoundedRectangle(cornerRadius: 16))

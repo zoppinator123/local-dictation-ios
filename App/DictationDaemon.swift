@@ -13,6 +13,7 @@ final class DictationDaemon: ObservableObject {
 
     @Published private(set) var isArmed = false
     @Published private(set) var isListening = false
+    @Published private(set) var lastError: String?
 
     private var listener: NWListener?
     private var engine: AVAudioEngine?
@@ -33,8 +34,10 @@ final class DictationDaemon: ObservableObject {
         retainInBackground()
         do {
             try armCapture()
+            lastError = nil
         } catch {
-            NSLog("DictationDaemon arm failed: \(error)")
+            lastError = error.localizedDescription
+            isArmed = false
         }
     }
 
@@ -63,10 +66,6 @@ final class DictationDaemon: ObservableObject {
         clipURL = url
         clipBox.setWriter(writer)
         isListening = true
-        for _ in 0..<40 {
-            if writer.hasData { return }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
     }
 
     func stopRecording() async throws -> String {

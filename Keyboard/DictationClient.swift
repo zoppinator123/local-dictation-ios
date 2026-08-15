@@ -9,22 +9,8 @@ enum DictationClient {
         var armed: Bool?
     }
 
-    static func isListening() async -> Bool {
-        (try? await send(path: "/health", timeout: 0.8))?.listening == true
-    }
-
-    static func health() async -> Bool {
-        for _ in 0..<3 {
-            if (try? await send(path: "/health", timeout: 1.2))?.ok == true {
-                return true
-            }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-        return false
-    }
-
     static func start() async throws {
-        let response = try await send(path: "/start", timeout: 8)
+        let response = try await send(path: "/start", timeout: 2)
         guard response.ok else {
             throw SpeechCaptureError.engineStartFailed(response.error ?? "Session start failed")
         }
