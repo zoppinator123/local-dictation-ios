@@ -39,6 +39,10 @@
 	<string>Local Dictation records your voice on this iPhone so it can turn speech into text. Audio stays on the device and is discarded after each dictation.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Local Dictation uses on-device speech recognition to convert what you say into text.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

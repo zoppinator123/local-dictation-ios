@@ -26,6 +26,10 @@ final class DictationDaemon: ObservableObject {
     }
 
     func shutdownAudio() {
+        teardownCapture(deactivateSession: true)
+    }
+
+    private func teardownCapture(deactivateSession: Bool) {
         removeTap()
         engine?.stop()
         engine?.reset()
@@ -34,19 +38,41 @@ final class DictationDaemon: ObservableObject {
         fileURL = nil
         isListening = false
         endBackgroundTask()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if deactivateSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
+    private func activateSessionForRecording() throws {
+        let session = AVAudioSession.sharedInstance()
+        let attempts: [AVAudioSession.CategoryOptions] = [
+            [.mixWithOthers, .defaultToSpeaker],
+            [.mixWithOthers],
+            [.mixWithOthers, .duckOthers],
+        ]
+        var lastError: Error?
+        for options in attempts {
+            do {
+                try session.setCategory(.playAndRecord, mode: .default, options: options)
+                try session.setActive(true)
+                return
+            } catch {
+                lastError = error
+            }
+        }
+        throw SpeechCaptureError.engineStartFailed(
+            "Couldn't start the mic from the background. Open Local Dictation, then tap again. \(lastError?.localizedDescription ?? "")"
+        )
     }
 
     func startRecording() async throws {
-        shutdownAudio()
+        teardownCapture(deactivateSession: false)
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "local-dictation") { [weak self] in
             self?.shutdownAudio()
         }
 
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
-        try session.setActive(true)
+        try activateSessionForRecording()
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
