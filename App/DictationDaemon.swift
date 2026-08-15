@@ -115,10 +115,12 @@ final class DictationDaemon: ObservableObject {
                 try armCapture()
                 publish()
                 lastError = nil
+                event("armCapture succeeded engine=\(engine?.isRunning == true) tap=\(tapInstalled)")
             } catch {
                 _ = session.micOff()
                 publish()
                 lastError = error.localizedDescription
+                event("armCapture failed: \(error.localizedDescription)")
             }
         case .success:
             publish()
@@ -180,10 +182,15 @@ final class DictationDaemon: ObservableObject {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [speechBox] buffer, _ in
+        let handler = Self.makeAudioTapHandler(speechBox)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format, block: handler)
+        tapInstalled = true
+    }
+
+    nonisolated private static func makeAudioTapHandler(_ speechBox: SpeechBox) -> AVAudioNodeTapBlock {
+        { buffer, _ in
             speechBox.append(buffer)
         }
-        tapInstalled = true
     }
 
     private func removeTap() {
@@ -288,7 +295,26 @@ final class DictationDaemon: ObservableObject {
         let line = "\(formatter.string(from: Date()))  \(message)"
         events.append(line)
         if events.count > 30 { events.removeFirst(events.count - 30) }
+        appendDiagnosticLine(line)
         NSLog("LocalDictation: \(line)")
+    }
+
+    private func appendDiagnosticLine(_ line: String) {
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let url = directory.appendingPathComponent("local-dictation-diagnostics.log")
+        let data = Data((line + "\n").utf8)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: data)
+            return
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return }
+        defer { try? handle.close() }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+        } catch {
+            // In-app diagnostics remain available even if durable logging fails.
+        }
     }
 
     private func deactivateAudioSession(attempt: Int, targetGeneration: UInt64) {

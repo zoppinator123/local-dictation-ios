@@ -8,6 +8,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         DictationDaemon.shared.shutdownAudio()
         DictationDaemon.shared.start()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--smoke-prime") {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 750_000_000)
+                DictationDaemon.shared.primeSession()
+            }
+        }
+        #endif
         return true
     }
 }
