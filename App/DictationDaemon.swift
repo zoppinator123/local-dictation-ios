@@ -20,8 +20,6 @@ final class DictationDaemon: ObservableObject {
     private var listener: NWListener?
     private var engine: AVAudioEngine?
     private var tapInstalled = false
-    private var clipURL: URL?
-    private let clipBox = AudioFileWriterBox()
     private let speechBox = SpeechBox()
     private var retainTask: UIBackgroundTaskIdentifier = .invalid
     private var commandBusy = false
@@ -50,8 +48,6 @@ final class DictationDaemon: ObservableObject {
         commandBusy = false
         _ = session.micOff()
         speechBox.cancel()
-        clipBox.clear()
-        clipURL = nil
         removeTap()
         engine?.stop()
         engine?.reset()
@@ -79,12 +75,11 @@ final class DictationDaemon: ObservableObject {
         case .success:
             break
         }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("local-dictation-\(UUID().uuidString).caf")
-        let writer = AudioFileWriter(url: url)
-        clipURL = url
-        clipBox.setWriter(writer)
-        speechBox.begin()
+        guard speechBox.begin() else {
+            session.failTranscription("Speech recognition is unavailable. Check your connection and Speech permission.")
+            publish()
+            throw SpeechCaptureError.engineStartFailed("Speech recognition is unavailable")
+        }
         publish()
     }
 
@@ -97,20 +92,8 @@ final class DictationDaemon: ObservableObject {
         case .success:
             break
         }
-        let url = clipURL
-        clipBox.clear()
-        clipURL = nil
         publish()
-        let live = await speechBox.finish(timeout: 3.5)
-        let fileText: String
-        if live.isEmpty, let url {
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            fileText = (try? await transcribeOffMain(url: url)) ?? ""
-        } else {
-            fileText = ""
-        }
-        if let url { try? FileManager.default.removeItem(at: url) }
-        let text = live.isEmpty ? fileText : live
+        let text = await speechBox.finish(timeout: 3.5)
         session.finishTranscription(text)
         publish()
         if !text.isEmpty {
@@ -150,13 +133,14 @@ final class DictationDaemon: ObservableObject {
         throw SpeechCaptureError.engineStartFailed("Simulator cannot start the mic. Plug in the iPhone to test dictation.")
 #else
         let audio = AVAudioSession.sharedInstance()
-        try audio.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+        try audio.setCategory(.record, mode: .measurement, options: [])
         try audio.setActive(true)
 
         if let engine, engine.isRunning, tapInstalled { return }
 
         removeTap()
         engine?.stop()
+        engine?.reset()
         engine = nil
 
         let engine = AVAudioEngine()
@@ -165,23 +149,19 @@ final class DictationDaemon: ObservableObject {
         guard hardware.channelCount > 0, hardware.sampleRate > 0 else {
             throw SpeechCaptureError.engineStartFailed("Microphone input is not ready.")
         }
-        engine.connect(input, to: engine.mainMixerNode, format: hardware)
-        let silence = AVAudioSourceNode(format: hardware) { _, _, _, ablPointer in
-            let abl = UnsafeMutableAudioBufferListPointer(ablPointer)
-            for buffer in abl {
-                if let data = buffer.mData {
-                    memset(data, 0, Int(buffer.mDataByteSize))
-                }
-            }
-            return noErr
-        }
-        engine.attach(silence)
-        engine.connect(silence, to: engine.mainMixerNode, format: hardware)
-        engine.mainMixerNode.outputVolume = 0.001
-        engine.prepare()
-        try engine.start()
         self.engine = engine
-        try installPersistentTap(format: hardware)
+        do {
+            try installPersistentTap(format: hardware)
+            engine.prepare()
+            try engine.start()
+        } catch {
+            removeTap()
+            engine.stop()
+            engine.reset()
+            self.engine = nil
+            try? audio.setActive(false, options: .notifyOthersOnDeactivation)
+            throw error
+        }
 #endif
     }
 
@@ -193,8 +173,7 @@ final class DictationDaemon: ObservableObject {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [clipBox, speechBox] buffer, _ in
-            clipBox.write(buffer)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [speechBox] buffer, _ in
             speechBox.append(buffer)
         }
         tapInstalled = true
@@ -205,12 +184,6 @@ final class DictationDaemon: ObservableObject {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
-    }
-
-    private func transcribeOffMain(url: URL) async throws -> String {
-        try await Task.detached {
-            try await transcribeURL(url)
-        }.value
     }
 
     private func startListener() {
@@ -327,45 +300,6 @@ final class DictationDaemon: ObservableObject {
     }
 }
 
-private final class AudioFileWriterBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var writer: AudioFileWriter?
-
-    func setWriter(_ writer: AudioFileWriter?) {
-        lock.lock()
-        self.writer = writer
-        lock.unlock()
-    }
-
-    func clear() { setWriter(nil) }
-
-    func write(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
-        let writer = writer
-        lock.unlock()
-        writer?.write(buffer)
-    }
-}
-
-private final class AudioFileWriter: @unchecked Sendable {
-    private let url: URL
-    private var file: AVAudioFile?
-    private let lock = NSLock()
-    private(set) var hasData = false
-
-    init(url: URL) { self.url = url }
-
-    func write(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
-        defer { lock.unlock() }
-        if file == nil {
-            file = try? AVAudioFile(forWriting: url, settings: buffer.format.settings)
-        }
-        try? file?.write(from: buffer)
-        if buffer.frameLength > 0 { hasData = true }
-    }
-}
-
 private final class SpeechBox: @unchecked Sendable {
     private let lock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -373,11 +307,11 @@ private final class SpeechBox: @unchecked Sendable {
     private var latest = ""
     private var isFinal = false
 
-    func begin() {
+    func begin() -> Bool {
         cancel()
         let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent)
             ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-        guard let recognizer else { return }
+        guard let recognizer, recognizer.isAvailable else { return false }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = false
@@ -386,13 +320,20 @@ private final class SpeechBox: @unchecked Sendable {
         latest = ""
         isFinal = false
         lock.unlock()
-        task = recognizer.recognitionTask(with: request) { [weak self] result, _ in
-            guard let self, let result else { return }
+        let recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            guard let self else { return }
             self.lock.lock()
-            self.latest = result.bestTranscription.formattedString
-            if result.isFinal { self.isFinal = true }
+            if let result {
+                self.latest = result.bestTranscription.formattedString
+                if result.isFinal { self.isFinal = true }
+            }
+            if error != nil { self.isFinal = true }
             self.lock.unlock()
         }
+        lock.lock()
+        task = recognitionTask
+        lock.unlock()
+        return true
     }
 
     func append(_ buffer: AVAudioPCMBuffer) {
@@ -420,12 +361,14 @@ private final class SpeechBox: @unchecked Sendable {
 
     func cancel() {
         lock.lock()
-        request?.endAudio()
-        task?.cancel()
-        request = nil
-        task = nil
+        let request = request
+        let task = task
+        self.request = nil
+        self.task = nil
         isFinal = false
         lock.unlock()
+        request?.endAudio()
+        task?.cancel()
     }
 
     private func endRequest() {
@@ -438,49 +381,5 @@ private final class SpeechBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return (isFinal, latest)
-    }
-}
-
-private func transcribeURL(_ url: URL) async throws -> String {
-    try await withThrowingTaskGroup(of: String.self) { group in
-        group.addTask {
-            let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent)
-                ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-            guard let recognizer else { return "" }
-            let request = SFSpeechURLRecognitionRequest(url: url)
-            request.requiresOnDeviceRecognition = false
-            return try await withCheckedThrowingContinuation { continuation in
-                let box = ResumeBox()
-                recognizer.recognitionTask(with: request) { result, error in
-                    if let result, result.isFinal {
-                        guard box.finish() else { return }
-                        continuation.resume(returning: result.bestTranscription.formattedString)
-                    } else if error != nil {
-                        guard box.finish() else { return }
-                        continuation.resume(returning: result?.bestTranscription.formattedString ?? "")
-                    }
-                }
-            }
-        }
-        group.addTask {
-            try await Task.sleep(nanoseconds: 8_000_000_000)
-            return ""
-        }
-        let first = try await group.next() ?? ""
-        group.cancelAll()
-        return first
-    }
-}
-
-private final class ResumeBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-
-    func finish() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if done { return false }
-        done = true
-        return true
     }
 }

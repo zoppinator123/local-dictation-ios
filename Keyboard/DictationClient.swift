@@ -10,9 +10,21 @@ enum DictationClient {
     }
 
     static func start() async throws {
-        let response = try await send(path: "/start", timeout: 8)
-        guard response.ok else {
-            throw SpeechCaptureError.engineStartFailed(response.error ?? "Session start failed")
+        do {
+            let response = try await send(path: "/start", timeout: 8)
+            guard response.ok else {
+                throw SpeechCaptureError.engineStartFailed(response.error ?? "Session start failed")
+            }
+        } catch {
+            // The host can open the clip but its HTTP response can be delayed while
+            // iOS transitions the containing app to background. Verify before failing.
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            if let health = try? await send(path: "/health", timeout: 3),
+               health.ok, health.listening == true {
+                return
+            }
+            let ns = error as NSError
+            throw SpeechCaptureError.engineStartFailed("Session connection failed (\(ns.domain) \(ns.code)): \(error.localizedDescription)")
         }
     }
 
