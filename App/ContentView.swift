@@ -27,7 +27,8 @@ struct ContentView: View {
         .onAppear {
             store.refresh()
             DictationDaemon.shared.start()
-            DictationDaemon.shared.shutdownAudio()
+            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+            try? AVAudioSession.sharedInstance().setActive(true)
             Task { await store.requestPermissions() }
         }
         .onOpenURL { url in

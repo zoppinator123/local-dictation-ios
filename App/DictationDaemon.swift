@@ -63,21 +63,30 @@ final class DictationDaemon: ObservableObject {
         teardownCapture(deactivateSession: false)
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "local-dictation") { [weak self] in
-            self?.shutdownAudio()
+            self?.teardownCapture(deactivateSession: false)
         }
 
         try activateSessionForRecording()
+        try await startRecorderWithRetry()
+        isListening = true
+    }
 
+    private func startRecorderWithRetry() async throws {
         let session = AVAudioSession.sharedInstance()
         let rates = [session.sampleRate, 44_100.0, 16_000.0].filter { $0 > 0 }
         var lastError: Error?
-        for rate in rates {
-            do {
-                try beginRecorder(sampleRate: rate)
-                isListening = true
-                return
-            } catch {
-                lastError = error
+        for attempt in 0..<2 {
+            for rate in rates {
+                do {
+                    try beginRecorder(sampleRate: rate)
+                    return
+                } catch {
+                    lastError = error
+                }
+            }
+            if attempt == 0 {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                try activateSessionForRecording()
             }
         }
         throw SpeechCaptureError.engineStartFailed(lastError?.localizedDescription ?? "Microphone did not start")
@@ -113,7 +122,8 @@ final class DictationDaemon: ObservableObject {
         let url = fileURL
         recorder = nil
         fileURL = nil
-        defer { shutdownAudio() }
+        isListening = false
+        endBackgroundTask()
         guard let url else {
             throw SpeechCaptureError.engineStartFailed("No audio captured")
         }
