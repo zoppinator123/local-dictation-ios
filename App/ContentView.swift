@@ -27,6 +27,7 @@ struct ContentView: View {
         .onAppear {
             store.refresh()
             DictationDaemon.shared.start()
+            DictationDaemon.shared.shutdownAudio()
             Task { await store.requestPermissions() }
         }
         .onOpenURL { url in
@@ -72,6 +73,10 @@ struct ContentView: View {
                 Button("Open Keyboard Settings") { store.openKeyboardSettings() }
             }
             .buttonStyle(.bordered)
+            Button("Turn microphone off") {
+                DictationDaemon.shared.shutdownAudio()
+            }
+            .buttonStyle(.borderedProminent)
         }
         .padding()
         .background(.background, in: RoundedRectangle(cornerRadius: 16))

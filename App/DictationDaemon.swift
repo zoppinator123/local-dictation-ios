@@ -4,8 +4,7 @@ import Network
 import Speech
 import UIKit
 
-/// Wispr-style Flow Session: the host process owns the mic.
-/// Keyboard only sends start/stop over localhost.
+/// Host-side capture. Audio runs only while a dictation is in progress.
 @MainActor
 final class DictationDaemon: ObservableObject {
     static let shared = DictationDaemon()
@@ -15,7 +14,6 @@ final class DictationDaemon: ObservableObject {
 
     private var listener: NWListener?
     private var engine: AVAudioEngine?
-    private var keepAlivePlayer: AVAudioPlayerNode?
     private var tapInstalled = false
     private var fileURL: URL?
     private var fileWriter: AudioFileWriter?
@@ -24,33 +22,47 @@ final class DictationDaemon: ObservableObject {
     private init() {}
 
     func start() {
-        startSessionAndEngine(forceRebuild: true)
         startListener()
     }
 
-    func startRecording() async throws {
-        startSessionAndEngine(forceRebuild: false)
-        if nativeInputFormat() == nil {
-            startSessionAndEngine(forceRebuild: true)
-        }
-        guard let engine else {
-            throw SpeechCaptureError.engineStartFailed("Audio engine is not running. Open Local Dictation and leave it open.")
-        }
+    func shutdownAudio() {
+        removeTap()
+        engine?.stop()
+        engine?.reset()
+        engine = nil
+        fileWriter = nil
+        fileURL = nil
+        isListening = false
+        endBackgroundTask()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
 
+    func startRecording() async throws {
+        shutdownAudio()
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "local-dictation") { [weak self] in
-            self?.endBackgroundTask()
+            self?.shutdownAudio()
         }
 
-        if tapInstalled {
-            engine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+        try session.setActive(true)
+
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        let hardware = input.outputFormat(forBus: 0)
+        if hardware.channelCount > 0, hardware.sampleRate > 0 {
+            engine.connect(input, to: engine.mainMixerNode, format: hardware)
         }
+        engine.mainMixerNode.outputVolume = 0
+        engine.prepare()
+        try engine.start()
+        self.engine = engine
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-dictation-\(UUID().uuidString).caf")
         let writer = AudioFileWriter(url: url)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
             writer.write(buffer)
         }
         tapInstalled = true
@@ -60,14 +72,8 @@ final class DictationDaemon: ObservableObject {
     }
 
     func stopRecording() async throws -> String {
-        defer {
-            isListening = false
-            endBackgroundTask()
-        }
-        if tapInstalled, let engine {
-            engine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
-        }
+        defer { shutdownAudio() }
+        removeTap()
         fileWriter = nil
         guard let url = fileURL else {
             throw SpeechCaptureError.engineStartFailed("No audio captured")
@@ -79,6 +85,13 @@ final class DictationDaemon: ObservableObject {
             UIPasteboard.general.string = ClipboardDictation.encode(text)
         }
         return text
+    }
+
+    private func removeTap() {
+        if tapInstalled, let engine {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
     }
 
     private func transcribe(url: URL) async throws -> String {
@@ -142,7 +155,7 @@ final class DictationDaemon: ObservableObject {
         do {
             switch path {
             case "/health":
-                return json(["ok": true, "listening": isListening, "engine": engine?.isRunning ?? false])
+                return json(["ok": true, "listening": isListening])
             case "/start":
                 try await startRecording()
                 return json(["ok": true])
@@ -159,6 +172,7 @@ final class DictationDaemon: ObservableObject {
                 return json(["ok": false, "error": "unknown"])
             }
         } catch {
+            shutdownAudio()
             return json(["ok": false, "error": error.localizedDescription])
         }
     }
@@ -169,58 +183,6 @@ final class DictationDaemon: ObservableObject {
             return #"{"ok":false,"error":"json"}"#
         }
         return text
-    }
-
-    private func nativeInputFormat() -> AVAudioFormat? {
-        guard let engine else { return nil }
-        let input = engine.inputNode
-        let hardware = input.inputFormat(forBus: 0)
-        if hardware.channelCount > 0, hardware.sampleRate > 0 { return hardware }
-        let output = input.outputFormat(forBus: 0)
-        if output.channelCount > 0, output.sampleRate > 0 { return output }
-        return nil
-    }
-
-    private func startSessionAndEngine(forceRebuild: Bool) {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
-        try? session.setPreferredSampleRate(48_000)
-        try? session.setActive(true)
-
-        if !forceRebuild, let engine, engine.isRunning, nativeInputFormat() != nil { return }
-
-        if tapInstalled, let engine {
-            engine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
-        }
-        keepAlivePlayer?.stop()
-        engine?.stop()
-        keepAlivePlayer = nil
-        engine = nil
-
-        let engine = AVAudioEngine()
-        engine.connect(engine.inputNode, to: engine.mainMixerNode, format: nil)
-        engine.mainMixerNode.outputVolume = 0.001
-        engine.prepare()
-        do {
-            try engine.start()
-            let hw = engine.mainMixerNode.outputFormat(forBus: 0)
-            if hw.sampleRate > 0, hw.channelCount > 0 {
-                let player = AVAudioPlayerNode()
-                engine.attach(player)
-                engine.connect(player, to: engine.mainMixerNode, format: hw)
-                let frames = AVAudioFrameCount(max(hw.sampleRate / 2, 512))
-                if let buffer = AVAudioPCMBuffer(pcmFormat: hw, frameCapacity: frames) {
-                    buffer.frameLength = frames
-                    player.scheduleBuffer(buffer, at: nil, options: .loops)
-                    player.play()
-                    keepAlivePlayer = player
-                }
-            }
-            self.engine = engine
-        } catch {
-            NSLog("DictationDaemon engine start failed: \(error)")
-        }
     }
 
     private func endBackgroundTask() {
