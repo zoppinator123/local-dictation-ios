@@ -12,6 +12,8 @@ settings:
     GENERATE_INFOPLIST_FILE: NO
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: Q4MSNRURZ4
+    CODE_SIGN_STYLE: Automatic
 targets:
   LocalDictation:
     type: application
@@ -29,6 +31,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/LocalDictation.entitlements
         PRODUCT_NAME: LocalDictation
         INFOPLIST_KEY_CFBundleDisplayName: Local Dictation
+        DEVELOPMENT_TEAM: Q4MSNRURZ4
+        CODE_SIGN_STYLE: Automatic
     entitlements:
       path: App/LocalDictation.entitlements
     dependencies:
@@ -67,6 +71,8 @@ targets:
         PRODUCT_NAME: LocalDictationKeyboard
         SKIP_INSTALL: YES
         INFOPLIST_KEY_CFBundleDisplayName: Local Dictation
+        DEVELOPMENT_TEAM: Q4MSNRURZ4
+        CODE_SIGN_STYLE: Automatic
     entitlements:
       path: Keyboard/LocalDictationKeyboard.entitlements
     info:
