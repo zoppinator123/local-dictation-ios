@@ -135,6 +135,9 @@ final class DictationDaemon: ObservableObject {
     }
 
     private func armCapture() throws {
+#if targetEnvironment(simulator)
+        throw SpeechCaptureError.engineStartFailed("Simulator cannot start the mic. Plug in the iPhone to test dictation.")
+#else
         let audio = AVAudioSession.sharedInstance()
         try audio.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
         try audio.setActive(true)
@@ -157,6 +160,7 @@ final class DictationDaemon: ObservableObject {
         try engine.start()
         self.engine = engine
         try installPersistentTap(format: hardware)
+#endif
     }
 
     private func installPersistentTap(format: AVAudioFormat) throws {

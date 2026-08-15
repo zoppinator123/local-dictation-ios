@@ -10,7 +10,7 @@ settings:
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1"
     GENERATE_INFOPLIST_FILE: NO
-    MARKETING_VERSION: "0.1.20"
+    MARKETING_VERSION: "0.1.21"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: Q4MSNRURZ4
     CODE_SIGN_STYLE: Automatic
@@ -94,11 +94,29 @@ targets:
             PrefersRightToLeft: false
             PrimaryLanguage: en-US
             RequestsOpenAccess: true
+  LocalDictationUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jackzoppa.LocalDictationUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: LocalDictation
+        CODE_SIGNING_ALLOWED: "NO"
+    dependencies:
+      - target: LocalDictation
 schemes:
   LocalDictation:
     build:
       targets:
         LocalDictation: all
         LocalDictationKeyboard: all
+        LocalDictationUITests: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - LocalDictationUITests
