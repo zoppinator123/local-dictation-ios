@@ -2,6 +2,8 @@ import AVFoundation
 import Foundation
 import Speech
 
+extension SFSpeechAudioBufferRecognitionRequest: SFSpeechBufferAppending {}
+
 @MainActor
 final class HostDictationController: ObservableObject {
     @Published var isActive = false
@@ -9,7 +11,7 @@ final class HostDictationController: ObservableObject {
     @Published var partialText = ""
     @Published var statusTitle = "Listening in Local Dictation"
 
-    private var audioEngine: AVAudioEngine?
+    private let capture = SpeechCaptureEngine()
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
@@ -28,25 +30,18 @@ final class HostDictationController: ObservableObject {
         isRecording = true
         partialText = ""
         statusTitle = "Listening…"
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+
+        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         self.recognizer = recognizer
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = true
+        if recognizer?.supportsOnDeviceRecognition == true {
+            request.requiresOnDeviceRecognition = true
+        }
         self.request = request
 
-        let engine = AVAudioEngine()
-        audioEngine = engine
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
-        }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
-            try engine.start()
+            try capture.start(appending: request)
             try store.save(SharedDictationPayload(status: .recording, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
         } catch {
             fail(error.localizedDescription)
@@ -55,22 +50,21 @@ final class HostDictationController: ObservableObject {
 
         task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
+                guard let self else { return }
                 if let result {
-                    self?.partialText = result.bestTranscription.formattedString
+                    self.partialText = result.bestTranscription.formattedString
                     if result.isFinal {
-                        self?.finish(result.bestTranscription.formattedString)
+                        self.finish(result.bestTranscription.formattedString)
                     }
                 } else if let error {
-                    self?.fail(error.localizedDescription)
+                    self.fail(error.localizedDescription)
                 }
             }
         }
     }
 
     func stop() {
-        request?.endAudio()
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
+        capture.endAudio()
         isRecording = false
         if !partialText.isEmpty {
             finish(partialText)
@@ -85,11 +79,10 @@ final class HostDictationController: ObservableObject {
     }
 
     private func finish(_ raw: String) {
-        let settings = (try? FileSettingsPersister(fileURL: (AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory).appendingPathComponent(AppGroupPaths.settingsFileName)).load()) ?? KeyboardSettings()
+        let directory = AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory
+        let settings = (try? FileSettingsPersister(fileURL: directory.appendingPathComponent(AppGroupPaths.settingsFileName)).load()) ?? KeyboardSettings()
         let vocabulary = VocabularyStore(
-            persister: FileVocabularyPersister(
-                fileURL: (AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory).appendingPathComponent(AppGroupPaths.vocabularyFileName)
-            )
+            persister: FileVocabularyPersister(fileURL: directory.appendingPathComponent(AppGroupPaths.vocabularyFileName))
         ).replacements()
         let cleaned = TranscriptPipeline(options: CleanupOptions(style: settings.style)).process(raw, vocabulary: vocabulary)
         try? store.save(SharedDictationPayload(status: .ready, transcript: cleaned, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
@@ -107,11 +100,8 @@ final class HostDictationController: ObservableObject {
     }
 
     private func stopEngine() {
-        request?.endAudio()
         task?.cancel()
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine = nil
+        capture.stop()
         request = nil
         task = nil
     }

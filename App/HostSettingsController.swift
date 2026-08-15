@@ -53,12 +53,18 @@ final class HostSettingsController: ObservableObject {
 
     func requestPermissions() async {
         let mic = await AVAudioApplication.requestRecordPermission()
-        let speech: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
-        }
+        let speech = await Self.requestSpeechAuthorization()
         refresh()
         if !mic || speech != .authorized {
             showingPermissionAlert = true
+        }
+    }
+
+    nonisolated private static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
         }
     }
 

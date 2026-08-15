@@ -26,5 +26,6 @@ public func allTests() -> [RegisteredTest] {
         RegisteredTest(name: "pipeline.prependsSpaceWhenNeeded", body: PipelineSuite.prependsSpaceWhenNeeded),
         RegisteredTest(name: "pipeline.noSpaceAfterPunctuation", body: PipelineSuite.noSpaceAfterPunctuation),
         RegisteredTest(name: "readiness.blockingOrder", body: ReadinessSuite.blockingOrder),
+        RegisteredTest(name: "capture.errorCopy", body: CaptureSuite.errorCopy),
     ]
 }

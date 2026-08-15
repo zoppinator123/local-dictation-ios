@@ -2,10 +2,12 @@ import AVFoundation
 import Speech
 import UIKit
 
+extension SFSpeechAudioBufferRecognitionRequest: SFSpeechBufferAppending {}
+
 final class KeyboardViewController: UIInputViewController {
     private var session = KeyboardSession()
     private var keyboardView: KeyboardChromeView?
-    private var audioEngine: AVAudioEngine?
+    private let capture = SpeechCaptureEngine()
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
@@ -115,45 +117,34 @@ final class KeyboardViewController: UIInputViewController {
         }
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
         if startInKeyboardRecognition() { return }
-        _ = session.handle(.cancel)
-        openHost(AppRoute.dictate.url)
+        session.fail(KeyboardFailure(code: "mic", message: "Microphone unavailable in the keyboard. Check Full Access."))
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
     }
 
     private func stopRecording() {
         _ = session.handle(.endHold)
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
-        request?.endAudio()
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
+        capture.endAudio()
     }
 
     private func startInKeyboardRecognition() -> Bool {
         guard fullAccessGranted else { return false }
         stopAudio()
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         guard let recognizer, recognizer.isAvailable else { return false }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = true
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.channelCount > 0 else { return false }
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
+        if recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
         }
         do {
-            try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: .duckOthers)
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
-            try engine.start()
+            try capture.start(appending: request)
         } catch {
             stopAudio()
             return false
         }
         self.recognizer = recognizer
         self.request = request
-        self.audioEngine = engine
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -245,11 +236,8 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func stopAudio() {
-        request?.endAudio()
         task?.cancel()
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine = nil
+        capture.stop()
         request = nil
         task = nil
     }

@@ -24,6 +24,7 @@ let package = Package(
             exclude: ["TestRunnerMain.swift"],
             sources: [
                 "AllTests.swift",
+                "CaptureTests.swift",
                 "CleanupTests.swift",
                 "Harness.swift",
                 "KeyboardSessionTests.swift",
@@ -39,6 +40,7 @@ let package = Package(
             path: "Tests",
             exclude: [
                 "AllTests.swift",
+                "CaptureTests.swift",
                 "CleanupTests.swift",
                 "Harness.swift",
                 "KeyboardSessionTests.swift",
