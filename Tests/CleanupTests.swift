@@ -36,4 +36,18 @@ enum CleanupSuite {
         let cleaned = DeterministicCleanup().clean("um hello", options: CleanupOptions(style: .raw, removeFillers: false))
         try expectEqual(cleaned, "um hello")
     }
+
+    static func emptyStaysEmpty() async throws {
+        try expectEqual(DeterministicCleanup().clean("   "), "")
+        try expectFalse(TranscriptPipeline().shouldInsert(DeterministicCleanup().clean("um uh")))
+    }
+
+    static func longestVocabWins() async throws {
+        let cleaned = DeterministicCleanup().clean(
+            "stay dos app",
+            vocabulary: ["stay": "Stay", "stay dos": "StaydOS"],
+            options: CleanupOptions(style: .raw)
+        )
+        try expectEqual(cleaned, "StaydOS app")
+    }
 }

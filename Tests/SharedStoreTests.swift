@@ -23,6 +23,8 @@ enum SharedStoreSuite {
         let encoded = ClipboardDictation.encode("Hello cabin")
         try expectEqual(ClipboardDictation.decode(encoded), "Hello cabin")
         try expectNil(ClipboardDictation.decode("not ours"))
+        try expectNil(ClipboardDictation.decode(ClipboardDictation.prefix))
+        try expect(ClipboardDictation.encode("x").hasPrefix(ClipboardDictation.prefix))
     }
 }
 
@@ -47,6 +49,37 @@ enum PipelineSuite {
     static func noSpaceAfterPunctuation() async throws {
         let plan = InsertionPlanner.plan(cleaned: "Thanks.", precedingText: "Hello.")
         try expectFalse(plan.prependSpace)
+    }
+
+    static func noSpaceAtStart() async throws {
+        let plan = InsertionPlanner.plan(cleaned: "Hello.", precedingText: nil)
+        try expectFalse(plan.prependSpace)
+        try expectEqual(plan.insertedText, "Hello.")
+    }
+
+    static func noSpaceAfterNewline() async throws {
+        let plan = InsertionPlanner.plan(cleaned: "Next.", precedingText: "Hi,\n")
+        try expectFalse(plan.prependSpace)
+    }
+
+    static func spaceAfterLetter() async throws {
+        let plan = InsertionPlanner.plan(cleaned: "there", precedingText: "Hi")
+        try expect(plan.prependSpace)
+    }
+
+    static func doubleEmailWrapIsWrong() async throws {
+        let once = TranscriptPipeline(options: CleanupOptions(style: .email)).process("hello", vocabulary: [:])
+        let twice = TranscriptPipeline(options: CleanupOptions(style: .email)).process(once, vocabulary: [:])
+        try expectEqual(once, "Hi,\n\nHello.\n\nThanks")
+        try expect(twice != once)
+    }
+
+    static func polishedIdempotent() async throws {
+        let pipeline = TranscriptPipeline()
+        let once = pipeline.process("um hello there", vocabulary: [:])
+        let twice = pipeline.process(once, vocabulary: [:])
+        try expectEqual(once, twice)
+        try expectEqual(once, "Hello there.")
     }
 }
 

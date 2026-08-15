@@ -41,6 +41,6 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Local Dictation records your voice so it can insert text in the current app.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Local Dictation uses on-device speech recognition inside the keyboard.</string>
+	<string>Local Dictation uses Apple Speech Recognition to convert what you say into text. Recognition may use Apple servers.</string>
 </dict>
 </plist>

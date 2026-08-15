@@ -118,15 +118,16 @@ enum HostCaptureSuite {
         try expect(session.state.micEngaged)
     }
 
-    static func startClipDuringTranscribingIsAllowed() async throws {
+    static func startClipDuringTranscribingIsRejected() async throws {
         var session = HostCaptureSession()
         _ = session.startSession(foreground: true)
         _ = session.startClip(foreground: false)
         _ = session.stopClip()
         try expectEqual(session.state.phase, .transcribing)
         let result = session.startClip(foreground: false)
-        try expectEqual(result, .success(.openClip))
-        try expectEqual(session.state.phase, .clipping)
+        try expectEqual(result, .failure(.alreadyClipping))
+        try expectEqual(session.state.phase, .transcribing)
+        try expectFalse(session.state.clipOpen)
     }
 
     static func micOffDuringTranscribing() async throws {
@@ -148,5 +149,53 @@ enum HostCaptureSuite {
         try expectEqual(HostCaptureRoute.parseHTTP("GET /off HTTP/1.1"), .off)
         try expectEqual(HostCaptureRoute.parseHTTP("GET /nope HTTP/1.1"), .unknown)
         try expectEqual(HostCaptureRoute.parseHTTP("GET /start?x=1 HTTP/1.1"), .start)
+        try expectEqual(HostCaptureRoute.parseHTTP(""), .unknown)
+        try expectEqual(HostCaptureRoute.parseHTTP("GET / HTTP/1.1"), .unknown)
+        try expectEqual(HostCaptureRoute.parseHTTP("POST /start HTTP/1.1"), .start)
+        try expectEqual(HostCaptureRoute.parseHTTP("GET /off"), .off)
+        try expectEqual(HostCaptureRoute.parseHTTP("GET /health\n"), .health)
+    }
+
+    static func lastErrorClearsOnNextClip() async throws {
+        var session = HostCaptureSession()
+        _ = session.startSession(foreground: true)
+        _ = session.startClip(foreground: false)
+        _ = session.stopClip()
+        session.finishTranscription("  ")
+        try expect(session.state.lastError != nil)
+        _ = session.startClip(foreground: false)
+        try expectNil(session.state.lastError)
+        try expectEqual(session.state.phase, .clipping)
+    }
+
+    static func finishAfterMicOffStaysIdle() async throws {
+        var session = HostCaptureSession()
+        _ = session.startSession(foreground: true)
+        _ = session.micOff()
+        session.finishTranscription("hello")
+        try expectEqual(session.state.phase, .idle)
+        try expectFalse(session.state.micEngaged)
+        try expectEqual(session.startClip(foreground: false), .failure(.needsForegroundSession))
+    }
+
+    static func fullTapCycleTwice() async throws {
+        var session = HostCaptureSession()
+        _ = session.startSession(foreground: true)
+        for word in ["hello", "world"] {
+            try expectEqual(session.startClip(foreground: false), .success(.openClip))
+            try expectEqual(session.stopClip(), .success(.closeClip))
+            session.finishTranscription(word)
+            try expectEqual(session.state.phase, .live)
+            try expectNil(session.state.lastError)
+        }
+        try expectEqual(session.micOff(), .stopHardware)
+        try expectEqual(session.startClip(foreground: false), .failure(.needsForegroundSession))
+    }
+
+    static func stopFromIdleDoesNotArm() async throws {
+        var session = HostCaptureSession()
+        try expectEqual(session.stopClip(), .failure(.notClipping))
+        try expectFalse(session.state.micEngaged)
+        try expectEqual(session.state.phase, .idle)
     }
 }

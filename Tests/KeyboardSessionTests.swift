@@ -67,6 +67,37 @@ enum KeyboardSessionSuite {
         try expectEqual(session.phase, .recording)
     }
 
+    static func failThenRetry() async throws {
+        var session = KeyboardSession(readiness: ready)
+        _ = session.handle(.beginHold)
+        session.fail(KeyboardFailure(code: "mic", message: "nope"))
+        try expectEqual(session.phase, .error)
+        try expect(session.handle(.beginHold))
+        try expectEqual(session.phase, .recording)
+    }
+
+    static func cancelFromTranscribing() async throws {
+        var session = KeyboardSession(readiness: ready)
+        _ = session.handle(.beginHold)
+        _ = session.handle(.endHold)
+        try expect(session.handle(.cancel))
+        try expectEqual(session.phase, .idle)
+    }
+
+    static func beginHoldWhileRecordingRejected() async throws {
+        var session = KeyboardSession(readiness: ready)
+        try expect(session.handle(.beginHold))
+        try expectFalse(session.handle(.beginHold))
+        try expectEqual(session.phase, .recording)
+    }
+
+    static func finishWhileIdleDoesNotInsert() async throws {
+        var session = KeyboardSession(readiness: ready)
+        session.finishTranscription("Hello")
+        try expectEqual(session.phase, .idle)
+        try expectEqual(session.lastTranscript, "Hello")
+    }
+
     private static var ready: KeyboardReadiness {
         KeyboardReadiness(
             keyboardEnabled: true,

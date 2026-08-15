@@ -10,7 +10,7 @@ settings:
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1"
     GENERATE_INFOPLIST_FILE: NO
-    MARKETING_VERSION: "0.1.18"
+    MARKETING_VERSION: "0.1.19"
     CURRENT_PROJECT_VERSION: "1"
     DEVELOPMENT_TEAM: Q4MSNRURZ4
     CODE_SIGN_STYLE: Automatic
@@ -50,8 +50,8 @@ targets:
           - CFBundleURLName: com.jackzoppa.LocalDictation
             CFBundleURLSchemes:
               - localdictation
-        NSMicrophoneUsageDescription: Local Dictation records your voice on this iPhone so it can turn speech into text. Audio stays on the device and is discarded after each dictation.
-        NSSpeechRecognitionUsageDescription: Local Dictation uses on-device speech recognition to convert what you say into text.
+        NSMicrophoneUsageDescription: Local Dictation records your voice on this iPhone so it can turn speech into text. Audio is discarded after each dictation.
+        NSSpeechRecognitionUsageDescription: Local Dictation uses Apple Speech Recognition to convert what you say into text. Recognition may use Apple servers.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIBackgroundModes:
@@ -85,7 +85,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSMicrophoneUsageDescription: Local Dictation records your voice so it can insert text in the current app.
-        NSSpeechRecognitionUsageDescription: Local Dictation uses on-device speech recognition inside the keyboard.
+        NSSpeechRecognitionUsageDescription: Local Dictation uses Apple Speech Recognition to convert what you say into text. Recognition may use Apple servers.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController

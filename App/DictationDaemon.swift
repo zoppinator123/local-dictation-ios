@@ -34,6 +34,9 @@ final class DictationDaemon: ObservableObject {
     func primeSession() {
         startListener()
         retainInBackground()
+        if engine?.isRunning != true || !tapInstalled {
+            _ = session.micOff()
+        }
         apply(session.startSession(foreground: true))
     }
 
@@ -109,24 +112,25 @@ final class DictationDaemon: ObservableObject {
         case .success(.startHardware):
             do {
                 try armCapture()
+                publish()
                 lastError = nil
             } catch {
                 _ = session.micOff()
+                publish()
                 lastError = error.localizedDescription
             }
         case .success:
-            lastError = session.state.lastError
+            publish()
         case .failure(let error):
+            publish()
             lastError = error.localizedDescription
         }
-        publish()
     }
 
     private func publish() {
         isArmed = session.state.micEngaged && engine?.isRunning == true
         isListening = session.isListening
-        lastError = session.state.lastError ?? lastError
-        if session.state.phase == .idle { lastError = session.state.lastError }
+        lastError = session.state.lastError
     }
 
     private func armCapture() throws {
@@ -225,13 +229,7 @@ final class DictationDaemon: ObservableObject {
                 return json(["ok": true])
             case .stop:
                 let raw = try await stopRecording()
-                let directory = AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory
-                let settings = (try? FileSettingsPersister(fileURL: directory.appendingPathComponent(AppGroupPaths.settingsFileName)).load()) ?? KeyboardSettings()
-                let vocabulary = VocabularyStore(
-                    persister: FileVocabularyPersister(fileURL: directory.appendingPathComponent(AppGroupPaths.vocabularyFileName))
-                ).replacements()
-                let cleaned = TranscriptPipeline(options: CleanupOptions(style: settings.style)).process(raw, vocabulary: vocabulary)
-                return json(["ok": true, "text": cleaned])
+                return json(["ok": true, "text": raw])
             case .off:
                 shutdownAudio()
                 return json(["ok": true])

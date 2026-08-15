@@ -80,7 +80,7 @@ public struct HostCaptureSession: Equatable, Sendable {
     }
 
     public mutating func startClip(foreground: Bool) -> Result<HostCaptureCommand, HostCaptureError> {
-        if state.phase == .clipping {
+        if state.phase == .clipping || state.phase == .transcribing {
             lastCommand = .none
             return .failure(.alreadyClipping)
         }
@@ -146,7 +146,8 @@ public enum HostCaptureRoute: String, Equatable, Sendable {
     public static func parseHTTP(_ request: String) -> HostCaptureRoute {
         let line = request.split(separator: "\r\n", maxSplits: 1).first.map(String.init) ?? request
         let token = line.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
-        let path = token.split(separator: "?").first.map(String.init) ?? token
+        let path = (token.split(separator: "?").first.map(String.init) ?? token)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         switch path {
         case "/health": return .health
         case "/start": return .start
