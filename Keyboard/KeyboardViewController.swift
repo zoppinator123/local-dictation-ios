@@ -255,6 +255,11 @@ final class KeyboardViewController: UIInputViewController {
             session.fail(KeyboardFailure(code: "host", message: payload.errorMessage ?? "Dictation failed"))
             lastInsertedGeneration = payload.generation
         }
+        if let clip = UIPasteboard.general.string, let transcript = ClipboardDictation.decode(clip) {
+            insertDictation(transcript)
+            UIPasteboard.general.string = ""
+            session.finishInsertion()
+        }
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
     }
 

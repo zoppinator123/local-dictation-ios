@@ -144,7 +144,15 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
         }
         audioQueue = queue
 
-        let bufferBytes = UInt32(sampleRate * 0.1 * 2)
+        var dataSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let formatStatus = AudioQueueGetProperty(queue, kAudioQueueProperty_StreamDescription, &asbd, &dataSize)
+        guard formatStatus == noErr, let format = AVAudioFormat(streamDescription: &asbd) else {
+            throw SpeechCaptureError.engineStartFailed("AudioQueue stream \(formatStatus)")
+        }
+        queueFormat = format
+
+        let bytesPerFrame = max(asbd.mBytesPerFrame, 2)
+        let bufferBytes = max(asbd.mBytesPerPacket * 512, bytesPerFrame * 512)
         for _ in 0..<3 {
             var buffer: AudioQueueBufferRef?
             let alloc = AudioQueueAllocateBuffer(queue, bufferBytes, &buffer)
@@ -179,9 +187,9 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
         guard let format = queueFormat,
               let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: packetCount) else { return }
         pcm.frameLength = packetCount
-        let byteCount = Int(packetCount) * 2
-        if let dest = pcm.int16ChannelData?[0] {
-            memcpy(dest, buffer.pointee.mAudioData, byteCount)
+        let byteCount = Int(buffer.pointee.mAudioDataByteSize)
+        if let dest = pcm.mutableAudioBufferList.pointee.mBuffers.mData {
+            memcpy(dest, buffer.pointee.mAudioData, min(byteCount, Int(pcm.audioBufferList.pointee.mBuffers.mDataByteSize)))
         }
         request?.append(pcm)
     }
@@ -259,13 +267,12 @@ public final class SpeechCaptureEngine: @unchecked Sendable {
 
     private func activateMixedRecordSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
-        var lastError: Error?
         let attempts: [(AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)] = [
-            (.playAndRecord, .voiceChat, [.mixWithOthers, .allowBluetooth, .defaultToSpeaker]),
-            (.playAndRecord, .spokenAudio, [.mixWithOthers, .duckOthers, .defaultToSpeaker]),
+            (.record, .default, [.mixWithOthers, .duckOthers]),
             (.record, .measurement, [.mixWithOthers]),
+            (.playAndRecord, .default, [.mixWithOthers, .defaultToSpeaker]),
         ]
+        var lastError: Error?
         for (category, mode, options) in attempts {
             do {
                 try session.setCategory(category, mode: mode, options: options)

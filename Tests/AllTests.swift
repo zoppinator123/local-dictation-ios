@@ -22,6 +22,7 @@ public func allTests() -> [RegisteredTest] {
         RegisteredTest(name: "session.missingFullAccessStillRecords", body: KeyboardSessionSuite.missingFullAccessStillRecords),
         RegisteredTest(name: "store.roundTrip", body: SharedStoreSuite.roundTrip),
         RegisteredTest(name: "store.missingFileIsIdle", body: SharedStoreSuite.missingFileIsIdle),
+        RegisteredTest(name: "store.clipboardRoundTrip", body: SharedStoreSuite.clipboardRoundTrip),
         RegisteredTest(name: "pipeline.insertsCleanedText", body: PipelineSuite.insertsCleanedText),
         RegisteredTest(name: "pipeline.rejectsBlank", body: PipelineSuite.rejectsBlank),
         RegisteredTest(name: "pipeline.prependsSpaceWhenNeeded", body: PipelineSuite.prependsSpaceWhenNeeded),

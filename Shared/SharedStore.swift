@@ -56,6 +56,20 @@ public struct FileSharedDictationStore: SharedDictationStoring, Sendable {
     }
 }
 
+public enum ClipboardDictation {
+    public static let prefix = "localdictation-transcript:"
+
+    public static func encode(_ text: String) -> String {
+        prefix + text
+    }
+
+    public static func decode(_ raw: String) -> String? {
+        guard raw.hasPrefix(prefix) else { return nil }
+        let text = String(raw.dropFirst(prefix.count))
+        return text.isEmpty ? nil : text
+    }
+}
+
 public enum AppGroupPaths {
     public static let identifier = "group.com.jackzoppa.LocalDictation"
     public static let payloadFileName = "shared-dictation.json"

@@ -18,6 +18,12 @@ enum SharedStoreSuite {
         let store = FileSharedDictationStore(fileURL: url)
         try expectEqual(try store.load().status, .idle)
     }
+
+    static func clipboardRoundTrip() async throws {
+        let encoded = ClipboardDictation.encode("Hello cabin")
+        try expectEqual(ClipboardDictation.decode(encoded), "Hello cabin")
+        try expectNil(ClipboardDictation.decode("not ours"))
+    }
 }
 
 enum PipelineSuite {

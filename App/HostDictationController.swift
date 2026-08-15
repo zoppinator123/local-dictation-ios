@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Speech
+import UIKit
 
 @MainActor
 final class HostDictationController: ObservableObject {
@@ -83,6 +84,7 @@ final class HostDictationController: ObservableObject {
         ).replacements()
         let cleaned = TranscriptPipeline(options: CleanupOptions(style: settings.style)).process(raw, vocabulary: vocabulary)
         try? store.save(SharedDictationPayload(status: .ready, transcript: cleaned, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
+        UIPasteboard.general.string = ClipboardDictation.encode(cleaned)
         statusTitle = "Saved. Switch back to the previous app."
         isRecording = false
         partialText = cleaned
