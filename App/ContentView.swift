@@ -26,7 +26,7 @@ struct ContentView: View {
             .background(Color(.systemGroupedBackground))
             .safeAreaInset(edge: .top) {
                 VStack(spacing: 8) {
-                    Text(daemon.isListening ? "Microphone is on" : (daemon.isArmed ? "Ready — mic is off" : "Microphone is off"))
+                    Text(daemon.isListening ? "Listening — tap the keyboard mic again to insert" : (daemon.isArmed ? "Session live — orange mic is on until you turn it off" : "Microphone is off"))
                         .font(.headline)
                     Button("Turn microphone off") {
                         daemon.shutdownAudio()
@@ -96,7 +96,7 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(daemon.isArmed ? .red : .accentColor)
-            Text(daemon.isArmed ? "Mic is on. Switch to Messages. Don't tap this app icon again or the mic turns off." : "Tap Start session first. The button must turn red.")
+            Text(daemon.isArmed ? "Session live. Orange mic stays on until you tap Turn microphone off. Switch to Messages and tap the keyboard mic." : "Tap Start session here first. That starts the mic. Then switch to Messages.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error = daemon.lastError {
@@ -178,10 +178,10 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Use it like Wispr Flow")
                 .font(.headline)
-            labeled("1", "Open Local Dictation and tap Start session.")
+            labeled("1", "Open Local Dictation and tap Start session. Orange mic comes on.")
             labeled("2", "Switch to Messages. Don't swipe Local Dictation away.")
-            labeled("3", "Tap the keyboard mic, speak, tap again. Mic turns off after.")
-            labeled("4", "Red Turn microphone off at the top of this app kills the orange dot.")
+            labeled("3", "Tap the keyboard mic, speak, tap again.")
+            labeled("4", "Orange stays on between takes. Tap Turn microphone off or Mic off when you're done.")
         }
         .padding()
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
