@@ -129,7 +129,8 @@ final class KeyboardViewController: UIInputViewController {
                 }
             }
             guard self.captureToken == token else { return }
-            self.handOffToHost()
+            self.session.fail(KeyboardFailure(code: "host", message: "Local Dictation isn't reachable. Open the app, then tap the mic."))
+            self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
         }
     }
 
@@ -178,7 +179,7 @@ final class KeyboardViewController: UIInputViewController {
     private func friendlyMicError(_ error: Error) -> String {
         let text = error.localizedDescription + " " + nsErrorText(error)
         if text.contains("560557684") || text.contains("!int") || text.contains("avfaudi") || text.contains("coreaudio") {
-            return "Leave Local Dictation open, then tap the mic again."
+            return "Tap the mic again."
         }
         return error.localizedDescription
     }

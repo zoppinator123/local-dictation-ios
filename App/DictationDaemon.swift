@@ -15,15 +15,24 @@ final class DictationDaemon: ObservableObject {
     private var listener: NWListener?
     private var recorder: AVAudioRecorder?
     private var fileURL: URL?
-    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var sessionPrimed = false
+    private var recordTask: UIBackgroundTaskIdentifier = .invalid
+    private var retainTask: UIBackgroundTaskIdentifier = .invalid
 
     private init() {}
 
     func start() {
         startListener()
+        retainInBackground()
+    }
+
+    func primeSession() {
+        startListener()
+        try? activateSessionForRecording(force: true)
     }
 
     func shutdownAudio() {
+        sessionPrimed = false
         teardownCapture(deactivateSession: true)
     }
 
@@ -32,41 +41,35 @@ final class DictationDaemon: ObservableObject {
         recorder = nil
         fileURL = nil
         isListening = false
-        endBackgroundTask()
         if deactivateSession {
+            sessionPrimed = false
+            endRecordTask()
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
 
-    private func activateSessionForRecording() throws {
+    private func activateSessionForRecording(force: Bool = false) throws {
+        if sessionPrimed, !force { return }
         let session = AVAudioSession.sharedInstance()
-        let attempts: [AVAudioSession.CategoryOptions] = [
-            [.mixWithOthers, .defaultToSpeaker],
-            [.mixWithOthers],
-        ]
-        var lastError: Error?
-        for options in attempts {
-            do {
-                try session.setCategory(.playAndRecord, mode: .default, options: options)
-                try session.setActive(true)
-                return
-            } catch {
-                lastError = error
-            }
+        do {
+            try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
+            try session.setActive(true)
+            sessionPrimed = true
+        } catch {
+            if sessionPrimed { return }
+            throw SpeechCaptureError.engineStartFailed("Couldn't start the mic. Open Local Dictation once, then tap again.")
         }
-        throw SpeechCaptureError.engineStartFailed(
-            "Couldn't start the mic from the background. Open Local Dictation, then tap again. \(lastError?.localizedDescription ?? "")"
-        )
     }
 
     func startRecording() async throws {
         teardownCapture(deactivateSession: false)
-        endBackgroundTask()
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "local-dictation") { [weak self] in
+        endRecordTask()
+        recordTask = UIApplication.shared.beginBackgroundTask(withName: "local-dictation") { [weak self] in
             self?.teardownCapture(deactivateSession: false)
+            self?.endRecordTask()
         }
 
-        try activateSessionForRecording()
+        try activateSessionForRecording(force: false)
         try await startRecorderWithRetry()
         isListening = true
     }
@@ -86,7 +89,6 @@ final class DictationDaemon: ObservableObject {
             }
             if attempt == 0 {
                 try? await Task.sleep(nanoseconds: 200_000_000)
-                try activateSessionForRecording()
             }
         }
         throw SpeechCaptureError.engineStartFailed(lastError?.localizedDescription ?? "Microphone did not start")
@@ -123,7 +125,7 @@ final class DictationDaemon: ObservableObject {
         recorder = nil
         fileURL = nil
         isListening = false
-        endBackgroundTask()
+        endRecordTask()
         guard let url else {
             throw SpeechCaptureError.engineStartFailed("No audio captured")
         }
@@ -213,7 +215,9 @@ final class DictationDaemon: ObservableObject {
                 return json(["ok": false, "error": "unknown"])
             }
         } catch {
-            shutdownAudio()
+            recorder?.stop()
+            recorder = nil
+            isListening = false
             return json(["ok": false, "error": error.localizedDescription])
         }
     }
@@ -226,10 +230,21 @@ final class DictationDaemon: ObservableObject {
         return text
     }
 
-    private func endBackgroundTask() {
-        if backgroundTask != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTask)
-            backgroundTask = .invalid
+    private func retainInBackground() {
+        if retainTask != .invalid { return }
+        retainTask = UIApplication.shared.beginBackgroundTask(withName: "local-dictation-retain") { [weak self] in
+            guard let self else { return }
+            if self.retainTask != .invalid {
+                UIApplication.shared.endBackgroundTask(self.retainTask)
+                self.retainTask = .invalid
+            }
+        }
+    }
+
+    private func endRecordTask() {
+        if recordTask != .invalid {
+            UIApplication.shared.endBackgroundTask(recordTask)
+            recordTask = .invalid
         }
     }
 }
