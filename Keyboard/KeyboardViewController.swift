@@ -2,15 +2,20 @@ import AVFoundation
 import Speech
 import UIKit
 
+extension SFSpeechAudioBufferRecognitionRequest: SFSpeechBufferAppending {}
+
 final class KeyboardViewController: UIInputViewController {
     private var session = KeyboardSession()
     private var keyboardView: KeyboardChromeView?
     private let capture = SpeechCaptureEngine()
     private var recognizer: SFSpeechRecognizer?
+    private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var pollTask: Task<Void, Never>?
     private var lastInsertedGeneration: UInt64 = 0
     private var lastCaptureError: String?
+    private var captureToken = UUID()
+    private var usingLiveCapture = false
 
     private var appGroupDirectory: URL {
         AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory
@@ -109,21 +114,73 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        lastCaptureError = nil
+        usingLiveCapture = false
+        let token = UUID()
+        captureToken = token
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.capture.start()
+                try await self.beginCapture()
+                if self.captureToken != token {
+                    self.capture.stopAndDelete()
+                }
             } catch {
-                self.lastCaptureError = error.localizedDescription
+                guard self.captureToken == token else { return }
+                self.lastCaptureError = self.captureErrorText(error)
                 self.session.fail(KeyboardFailure(code: "mic", message: self.lastCaptureError ?? "Microphone failed"))
                 self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
             }
         }
     }
 
+    private func beginCapture() async throws {
+        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        guard let recognizer else {
+            throw SpeechCaptureError.engineStartFailed("Speech recognizer unavailable")
+        }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = false
+        do {
+            try await capture.startLive(appending: request)
+            usingLiveCapture = true
+            self.recognizer = recognizer
+            self.request = request
+            task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let result, result.isFinal {
+                        self.completeTranscription(result.bestTranscription.formattedString)
+                    } else if let result {
+                        self.keyboardView?.setPartial(result.bestTranscription.formattedString)
+                    } else if let error, self.session.phase == .transcribing {
+                        self.session.fail(KeyboardFailure(code: "speech", message: nsErrorText(error)))
+                        self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                    }
+                }
+            }
+            return
+        } catch {
+            lastCaptureError = "live \(captureErrorText(error))"
+        }
+        try await capture.startFile()
+        usingLiveCapture = false
+    }
+
+    private func captureErrorText(_ error: Error) -> String {
+        let access = openAccessGranted ? "fa=1" : "fa=0"
+        return "\(access) \(error.localizedDescription)"
+    }
+
     private func stopRecording() {
+        captureToken = UUID()
         _ = session.handle(.endHold)
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
+        if usingLiveCapture {
+            capture.endAudio()
+            return
+        }
         transcribeFile(capture.stop())
     }
 

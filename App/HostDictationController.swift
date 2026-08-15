@@ -28,7 +28,7 @@ final class HostDictationController: ObservableObject {
         partialText = ""
         statusTitle = "Listening…"
         do {
-            try await capture.start()
+            try await capture.startFile()
             try store.save(SharedDictationPayload(status: .recording, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
         } catch {
             fail(nsErrorText(error))
