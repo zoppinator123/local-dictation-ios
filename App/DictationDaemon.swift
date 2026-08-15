@@ -5,7 +5,7 @@ import Speech
 import UIKit
 
 /// Wispr-style Flow Session: the host process owns the mic.
-/// The keyboard only sends start/stop over localhost (Full Access allows network).
+/// Keyboard only sends start/stop over localhost.
 @MainActor
 final class DictationDaemon: ObservableObject {
     static let shared = DictationDaemon()
@@ -14,37 +14,69 @@ final class DictationDaemon: ObservableObject {
     @Published private(set) var isListening = false
 
     private var listener: NWListener?
-    private let capture = SpeechCaptureEngine()
-    private var keepAliveEngine: AVAudioEngine?
+    private var engine: AVAudioEngine?
     private var keepAlivePlayer: AVAudioPlayerNode?
+    private var tapInstalled = false
+    private var fileURL: URL?
+    private var fileWriter: AudioFileWriter?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     private init() {}
 
     func start() {
-        startKeepAlive()
+        startSessionAndEngine()
         startListener()
     }
 
     func startRecording() async throws {
+        startSessionAndEngine()
+        guard let engine else {
+            throw SpeechCaptureError.engineStartFailed("Audio engine is not running. Open Local Dictation and leave it open.")
+        }
+
         endBackgroundTask()
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "local-dictation") { [weak self] in
             self?.endBackgroundTask()
         }
-        stopKeepAliveAudio()
-        try await Task.sleep(nanoseconds: 80_000_000)
-        try await capture.startFile(reuseExistingSession: true)
+
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+
+        let input = engine.inputNode
+        let format = input.inputFormat(forBus: 0)
+        guard format.channelCount > 0, format.sampleRate > 0 else {
+            throw SpeechCaptureError.engineStartFailed("Microphone input is not ready.")
+        }
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-dictation-\(UUID().uuidString).caf")
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let writer = AudioFileWriter(file: file)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            writer.write(buffer)
+        }
+        tapInstalled = true
+        fileURL = url
+        fileWriter = writer
         isListening = true
     }
 
     func stopRecording() async throws -> String {
         defer {
             isListening = false
-            startKeepAlive()
+            endBackgroundTask()
         }
-        guard let url = capture.stop(deactivateSession: false) else {
+        if tapInstalled, let engine {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        fileWriter = nil
+        guard let url = fileURL else {
             throw SpeechCaptureError.engineStartFailed("No audio captured")
         }
+        fileURL = nil
         let text = try await transcribe(url: url)
         try? FileManager.default.removeItem(at: url)
         if !text.isEmpty {
@@ -62,10 +94,13 @@ final class DictationDaemon: ObservableObject {
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.requiresOnDeviceRecognition = false
         return try await withCheckedThrowingContinuation { continuation in
+            let box = ResumeBox()
             recognizer.recognitionTask(with: request) { result, error in
                 if let result, result.isFinal {
+                    guard box.finish() else { return }
                     continuation.resume(returning: result.bestTranscription.formattedString)
                 } else if let error {
+                    guard box.finish() else { return }
                     continuation.resume(throwing: error)
                 }
             }
@@ -111,10 +146,10 @@ final class DictationDaemon: ObservableObject {
         do {
             switch path {
             case "/health":
-                return #"{"ok":true,"listening":\#(isListening)}"#
+                return json(["ok": true, "listening": isListening, "engine": engine?.isRunning ?? false])
             case "/start":
                 try await startRecording()
-                return #"{"ok":true}"#
+                return json(["ok": true])
             case "/stop":
                 let raw = try await stopRecording()
                 let directory = AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory
@@ -123,23 +158,30 @@ final class DictationDaemon: ObservableObject {
                     persister: FileVocabularyPersister(fileURL: directory.appendingPathComponent(AppGroupPaths.vocabularyFileName))
                 ).replacements()
                 let cleaned = TranscriptPipeline(options: CleanupOptions(style: settings.style)).process(raw, vocabulary: vocabulary)
-                let encoded = cleaned.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-                return "{\"ok\":true,\"text\":\"\(encoded)\"}"
+                return json(["ok": true, "text": cleaned])
             default:
-                return #"{"ok":false,"error":"unknown"}"#
+                return json(["ok": false, "error": "unknown"])
             }
         } catch {
-            let message = error.localizedDescription.replacingOccurrences(of: "\"", with: "'")
-            return "{\"ok\":false,\"error\":\"\(message)\"}"
+            return json(["ok": false, "error": error.localizedDescription])
         }
     }
 
-    private func startKeepAlive() {
+    private func json(_ object: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else {
+            return #"{"ok":false,"error":"json"}"#
+        }
+        return text
+    }
+
+    private func startSessionAndEngine() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker])
         try? session.setActive(true)
 
-        if keepAliveEngine != nil { return }
+        if let engine, engine.isRunning { return }
+
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1)!
@@ -147,23 +189,17 @@ final class DictationDaemon: ObservableObject {
         buffer.frameLength = 8_000
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
-        engine.mainMixerNode.outputVolume = 0
+        engine.mainMixerNode.outputVolume = 0.001
+        engine.prepare()
         do {
             try engine.start()
             player.scheduleBuffer(buffer, at: nil, options: .loops)
             player.play()
-            keepAliveEngine = engine
+            self.engine = engine
             keepAlivePlayer = player
         } catch {
-            NSLog("DictationDaemon keep-alive failed: \(error)")
+            NSLog("DictationDaemon engine start failed: \(error)")
         }
-    }
-
-    private func stopKeepAliveAudio() {
-        keepAlivePlayer?.stop()
-        keepAliveEngine?.stop()
-        keepAlivePlayer = nil
-        keepAliveEngine = nil
     }
 
     private func endBackgroundTask() {
@@ -171,5 +207,33 @@ final class DictationDaemon: ObservableObject {
             UIApplication.shared.endBackgroundTask(backgroundTask)
             backgroundTask = .invalid
         }
+    }
+}
+
+private final class AudioFileWriter: @unchecked Sendable {
+    private let file: AVAudioFile
+    private let lock = NSLock()
+
+    init(file: AVAudioFile) {
+        self.file = file
+    }
+
+    func write(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+        try? file.write(from: buffer)
+    }
+}
+
+private final class ResumeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func finish() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
     }
 }
