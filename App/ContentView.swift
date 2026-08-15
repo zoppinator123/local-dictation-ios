@@ -33,7 +33,6 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red)
-                    .disabled(!daemon.isListening && !daemon.isArmed)
                 }
                 .frame(maxWidth: .infinity)
                 .padding()

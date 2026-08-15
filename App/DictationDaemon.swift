@@ -42,6 +42,7 @@ final class DictationDaemon: ObservableObject {
     }
 
     func shutdownAudio() {
+        commandBusy = false
         _ = session.micOff()
         speechBox.cancel()
         clipBox.clear()
@@ -50,8 +51,11 @@ final class DictationDaemon: ObservableObject {
         engine?.stop()
         engine?.reset()
         engine = nil
+        endRetain()
+        let audio = AVAudioSession.sharedInstance()
+        try? audio.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+        try? audio.setActive(false, options: .notifyOthersOnDeactivation)
         publish()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     func startRecording() async throws {
@@ -129,7 +133,7 @@ final class DictationDaemon: ObservableObject {
     }
 
     private func publish() {
-        isArmed = session.state.micEngaged && engine?.isRunning == true
+        isArmed = session.state.micEngaged || engine?.isRunning == true
         isListening = session.isListening
         lastError = session.state.lastError
     }
@@ -155,7 +159,18 @@ final class DictationDaemon: ObservableObject {
             throw SpeechCaptureError.engineStartFailed("Microphone input is not ready.")
         }
         engine.connect(input, to: engine.mainMixerNode, format: hardware)
-        engine.mainMixerNode.outputVolume = 0
+        let silence = AVAudioSourceNode(format: hardware) { _, _, _, ablPointer in
+            let abl = UnsafeMutableAudioBufferListPointer(ablPointer)
+            for buffer in abl {
+                if let data = buffer.mData {
+                    memset(data, 0, Int(buffer.mDataByteSize))
+                }
+            }
+            return noErr
+        }
+        engine.attach(silence)
+        engine.connect(silence, to: engine.mainMixerNode, format: hardware)
+        engine.mainMixerNode.outputVolume = 0.001
         engine.prepare()
         try engine.start()
         self.engine = engine
@@ -229,6 +244,10 @@ final class DictationDaemon: ObservableObject {
         if route == .health {
             return json(["ok": true, "listening": isListening, "armed": isArmed])
         }
+        if route == .off {
+            shutdownAudio()
+            return json(["ok": true])
+        }
         if commandBusy {
             return json(["ok": false, "error": "Busy. Tap again."])
         }
@@ -262,6 +281,13 @@ final class DictationDaemon: ObservableObject {
             return #"{"ok":false,"error":"json"}"#
         }
         return text
+    }
+
+    private func endRetain() {
+        if retainTask != .invalid {
+            UIApplication.shared.endBackgroundTask(retainTask)
+            retainTask = .invalid
+        }
     }
 
     private func retainInBackground() {
