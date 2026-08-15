@@ -10,6 +10,7 @@ final class KeyboardChromeView: UIView {
     var onReturn: (() -> Void)?
     var onNextKeyboard: (() -> Void)?
     var onOpenApp: (() -> Void)?
+    var onMicOff: (() -> Void)?
 
     private let statusLabel = UILabel()
     private let micButton = UIButton(type: .system)
@@ -122,6 +123,7 @@ final class KeyboardChromeView: UIView {
         row.addArrangedSubview(space)
         row.addArrangedSubview(actionButton("return") { [weak self] in self?.onReturn?() })
         row.addArrangedSubview(actionButton("App") { [weak self] in self?.onOpenApp?() })
+        row.addArrangedSubview(actionButton("Mic off") { [weak self] in self?.onMicOff?() })
         space.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
         return row
     }

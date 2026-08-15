@@ -17,11 +17,15 @@ enum DictationClient {
     }
 
     static func stop() async throws -> String {
-        let response = try await send(path: "/stop", timeout: 8)
+        let response = try await send(path: "/stop", timeout: 12)
         guard response.ok else {
             throw SpeechCaptureError.engineStartFailed(response.error ?? "Session stop failed")
         }
         return response.text ?? ""
+    }
+
+    static func turnOff() async {
+        _ = try? await send(path: "/off", timeout: 2)
     }
 
     private static func send(path: String, timeout: TimeInterval) async throws -> Response {

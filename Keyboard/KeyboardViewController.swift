@@ -38,6 +38,7 @@ final class KeyboardViewController: UIInputViewController {
         chrome.onReturn = { [weak self] in self?.textDocumentProxy.insertText("\n") }
         chrome.onNextKeyboard = { [weak self] in self?.advanceToNextInputMode() }
         chrome.onOpenApp = { [weak self] in self?.openHost(AppRoute.root.url) }
+        chrome.onMicOff = { [weak self] in self?.turnMicOff() }
         view.addSubview(chrome)
         NSLayoutConstraint.activate([
             chrome.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -287,6 +288,15 @@ final class KeyboardViewController: UIInputViewController {
                 await MainActor.run { self.consumeSharedTranscriptIfNeeded() }
             }
         }
+    }
+
+    private func turnMicOff() {
+        captureToken = UUID()
+        if session.phase == .recording {
+            _ = session.handle(.cancel)
+        }
+        keyboardView?.apply(session.snapshot, holdToTalk: false)
+        Task { await DictationClient.turnOff() }
     }
 
     private func openHost(_ url: URL) {

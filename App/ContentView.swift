@@ -24,6 +24,21 @@ struct ContentView: View {
             }
             .navigationTitle("Local Dictation")
             .background(Color(.systemGroupedBackground))
+            .safeAreaInset(edge: .top) {
+                VStack(spacing: 8) {
+                    Text(daemon.isListening ? "Microphone is on" : (daemon.isArmed ? "Ready — mic is off" : "Microphone is off"))
+                        .font(.headline)
+                    Button("Turn microphone off") {
+                        daemon.shutdownAudio()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(!daemon.isListening && !daemon.isArmed)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(daemon.isListening ? Color.red.opacity(0.18) : Color(.secondarySystemBackground))
+            }
         }
         .onAppear {
             store.refresh()
@@ -165,8 +180,8 @@ struct ContentView: View {
                 .font(.headline)
             labeled("1", "Open Local Dictation and tap Start session.")
             labeled("2", "Switch to Messages. Don't swipe Local Dictation away.")
-            labeled("3", "Tap the keyboard mic, speak, tap again.")
-            labeled("4", "To kill the orange mic, reopen Local Dictation or tap Turn microphone off.")
+            labeled("3", "Tap the keyboard mic, speak, tap again. Mic turns off after.")
+            labeled("4", "Red Turn microphone off at the top of this app kills the orange dot.")
         }
         .padding()
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
