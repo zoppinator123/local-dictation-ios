@@ -23,6 +23,7 @@ final class DictationDaemon: ObservableObject {
     private let speechBox = SpeechBox()
     private var retainTask: UIBackgroundTaskIdentifier = .invalid
     private var commandBusy = false
+    private var generation: UInt64 = 0
     private let networkQueue = DispatchQueue(label: "com.jackzoppa.LocalDictation.listener", qos: .userInitiated)
 
     private init() {}
@@ -34,6 +35,7 @@ final class DictationDaemon: ObservableObject {
     }
 
     func primeSession() {
+        generation &+= 1
         event("Start session tapped")
         startListener()
         retainInBackground()
@@ -45,6 +47,7 @@ final class DictationDaemon: ObservableObject {
 
     func shutdownAudio() {
         event("OFF requested")
+        generation &+= 1
         commandBusy = false
         _ = session.micOff()
         speechBox.cancel()
@@ -53,10 +56,8 @@ final class DictationDaemon: ObservableObject {
         engine?.reset()
         engine = nil
         endRetain()
-        let audio = AVAudioSession.sharedInstance()
-        try? audio.setActive(false, options: .notifyOthersOnDeactivation)
-        try? audio.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
         publish()
+        deactivateAudioSession(attempt: 1, targetGeneration: generation)
     }
 
     func startRecording() async throws {
@@ -85,6 +86,7 @@ final class DictationDaemon: ObservableObject {
 
     func stopRecording() async throws -> String {
         event("/stop received")
+        let takeGeneration = generation
         switch session.stopClip() {
         case .failure:
             publish()
@@ -94,6 +96,10 @@ final class DictationDaemon: ObservableObject {
         }
         publish()
         let text = await speechBox.finish(timeout: 3.5)
+        guard generation == takeGeneration else {
+            event("discarded stale /stop after OFF")
+            return ""
+        }
         session.finishTranscription(text)
         publish()
         if !text.isEmpty {
@@ -283,6 +289,27 @@ final class DictationDaemon: ObservableObject {
         events.append(line)
         if events.count > 30 { events.removeFirst(events.count - 30) }
         NSLog("LocalDictation: \(line)")
+    }
+
+    private func deactivateAudioSession(attempt: Int, targetGeneration: UInt64) {
+        guard generation == targetGeneration else { return }
+        let audio = AVAudioSession.sharedInstance()
+        do {
+            try audio.setActive(false, options: .notifyOthersOnDeactivation)
+            try? audio.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            isArmed = false
+            if lastError?.contains("could not be turned off") == true { lastError = nil }
+            event("OFF confirmed")
+        } catch {
+            isArmed = true
+            lastError = "Microphone could not be turned off (attempt \(attempt)): \(error.localizedDescription)"
+            event("OFF failed attempt \(attempt): \(error.localizedDescription)")
+            guard attempt < 3 else { return }
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                self?.deactivateAudioSession(attempt: attempt + 1, targetGeneration: targetGeneration)
+            }
+        }
     }
 
     private func endRetain() {
