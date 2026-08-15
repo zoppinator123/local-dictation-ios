@@ -120,15 +120,22 @@ final class KeyboardViewController: UIInputViewController {
         captureToken = token
         Task { [weak self] in
             guard let self else { return }
-            do {
-                try await self.beginCapture()
-                if self.captureToken != token {
-                    self.capture.stopAndDelete()
+            if await DictationClient.health() {
+                do {
+                    try await DictationClient.start()
+                    if self.captureToken != token {
+                        _ = try? await DictationClient.stop()
+                    }
+                    return
+                } catch {
+                    guard self.captureToken == token else { return }
+                    self.session.fail(KeyboardFailure(code: "mic", message: error.localizedDescription))
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                    return
                 }
-            } catch {
-                guard self.captureToken == token else { return }
-                self.handOffToHost()
             }
+            guard self.captureToken == token else { return }
+            self.handOffToHost()
         }
     }
 
@@ -183,11 +190,24 @@ final class KeyboardViewController: UIInputViewController {
         captureToken = UUID()
         _ = session.handle(.endHold)
         keyboardView?.apply(session.snapshot, holdToTalk: loadSettings().holdToTalk)
-        if usingLiveCapture {
-            capture.endAudio()
-            return
+        Task { [weak self] in
+            guard let self else { return }
+            if await DictationClient.health() {
+                do {
+                    let text = try await DictationClient.stop()
+                    self.completeTranscription(text)
+                } catch {
+                    self.session.fail(KeyboardFailure(code: "speech", message: error.localizedDescription))
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: self.loadSettings().holdToTalk)
+                }
+                return
+            }
+            if self.usingLiveCapture {
+                self.capture.endAudio()
+                return
+            }
+            self.transcribeFile(self.capture.stop())
         }
-        transcribeFile(capture.stop())
     }
 
     private func transcribeFile(_ url: URL?) {

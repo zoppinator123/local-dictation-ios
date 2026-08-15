@@ -26,6 +26,7 @@ struct ContentView: View {
         }
         .onAppear {
             store.refresh()
+            DictationDaemon.shared.start()
             Task { await store.requestPermissions() }
         }
         .onOpenURL { url in
