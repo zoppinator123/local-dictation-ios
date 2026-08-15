@@ -27,7 +27,6 @@ struct ContentView: View {
         }
         .onAppear {
             store.refresh()
-            DictationDaemon.shared.primeSession()
             Task { await store.requestPermissions() }
         }
         .onOpenURL { url in
@@ -73,7 +72,7 @@ struct ContentView: View {
                 Button("Open Keyboard Settings") { store.openKeyboardSettings() }
             }
             .buttonStyle(.bordered)
-            Button(daemon.isArmed ? "End session (turns mic off)" : "Start session") {
+            Button(daemon.isArmed ? "Turn microphone off" : "Start session") {
                 if daemon.isArmed {
                     daemon.shutdownAudio()
                 } else {
@@ -81,7 +80,8 @@ struct ContentView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            Text(daemon.isArmed ? "Session live. Orange mic is expected. Switch to Messages and tap the keyboard mic." : "Open this app to start a session first.")
+            .tint(daemon.isArmed ? .red : .accentColor)
+            Text(daemon.isArmed ? "Mic is on. Switch to Messages and tap the keyboard mic. Opening this app again also turns the mic off." : "Tap Start session, then switch to Messages. Don't swipe this app away.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -158,10 +158,10 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Use it like Wispr Flow")
                 .font(.headline)
-            labeled("1", "Open Messages, Mail, Slack, Notes, or any app with a text field.")
-            labeled("2", "Hold the globe key and switch to Local Dictation.")
-            labeled("3", "Orange mic means the session is live. Tap the keyboard mic, speak, tap again.")
-            labeled("4", "Cleaned text is inserted at the cursor. Use the letter keys if you need to edit.")
+            labeled("1", "Open Local Dictation and tap Start session.")
+            labeled("2", "Switch to Messages. Don't swipe Local Dictation away.")
+            labeled("3", "Tap the keyboard mic, speak, tap again.")
+            labeled("4", "To kill the orange mic, reopen Local Dictation or tap Turn microphone off.")
         }
         .padding()
         .background(.background, in: RoundedRectangle(cornerRadius: 16))

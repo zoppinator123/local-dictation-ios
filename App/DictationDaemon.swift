@@ -52,16 +52,21 @@ final class DictationDaemon: ObservableObject {
 
     func startRecording() async throws {
         if engine?.isRunning != true {
-            throw SpeechCaptureError.engineStartFailed("Open Local Dictation to start a session, then tap again.")
+            throw SpeechCaptureError.engineStartFailed("Tap Start session in Local Dictation first.")
         }
         if !tapInstalled {
             try installPersistentTap()
         }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-dictation-\(UUID().uuidString).caf")
+        let writer = AudioFileWriter(url: url)
         clipURL = url
-        clipBox.setWriter(AudioFileWriter(url: url))
+        clipBox.setWriter(writer)
         isListening = true
+        for _ in 0..<40 {
+            if writer.hasData { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 
     func stopRecording() async throws -> String {
@@ -69,10 +74,13 @@ final class DictationDaemon: ObservableObject {
         clipBox.clear()
         clipURL = nil
         isListening = false
-        guard let url else {
-            throw SpeechCaptureError.engineStartFailed("No audio captured")
+        guard let url else { return "" }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        guard FileManager.default.fileExists(atPath: url.path),
+              (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0 > 44 else {
+            try? FileManager.default.removeItem(at: url)
+            return ""
         }
-        try? await Task.sleep(nanoseconds: 80_000_000)
         let text = try await transcribe(url: url)
         try? FileManager.default.removeItem(at: url)
         if !text.isEmpty {
@@ -272,7 +280,10 @@ private final class AudioFileWriter: @unchecked Sendable {
             file = try? AVAudioFile(forWriting: url, settings: buffer.format.settings)
         }
         try? file?.write(from: buffer)
+        if buffer.frameLength > 0 { hasData = true }
     }
+
+    private(set) var hasData = false
 }
 
 private final class ResumeBox: @unchecked Sendable {

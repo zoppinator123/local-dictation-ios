@@ -91,8 +91,11 @@ final class KeyboardViewController: UIInputViewController {
 
     private func handleMicUp() {}
 
+    private var connecting = false
+
     private func handleMicTap() {
         refreshSession()
+        if connecting { return }
         if session.phase == .recording {
             stopRecording()
         } else if session.phase == .transcribing {
@@ -103,34 +106,35 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func startRecording() {
-        guard session.handle(.beginHold) else {
-            keyboardView?.apply(session.snapshot, holdToTalk: false)
-            return
-        }
-        keyboardView?.apply(session.snapshot, holdToTalk: false)
+        connecting = true
         lastCaptureError = nil
         usingLiveCapture = false
         let token = UUID()
         captureToken = token
+        keyboardView?.setPartial("Starting…")
         Task { [weak self] in
             guard let self else { return }
-            if await DictationClient.health() {
-                do {
-                    try await DictationClient.start()
-                    if self.captureToken != token {
-                        _ = try? await DictationClient.stop()
-                    }
+            defer { self.connecting = false }
+            do {
+                guard await DictationClient.health() else {
+                    throw SpeechCaptureError.engineStartFailed("Open Local Dictation, tap Start session, then try again.")
+                }
+                try await DictationClient.start()
+                guard self.captureToken == token else {
+                    _ = try? await DictationClient.stop()
                     return
-                } catch {
-                    guard self.captureToken == token else { return }
-                    self.session.fail(KeyboardFailure(code: "mic", message: self.friendlyMicError(error)))
+                }
+                guard self.session.handle(.beginHold) else {
+                    _ = try? await DictationClient.stop()
                     self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
                     return
                 }
+                self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
+            } catch {
+                guard self.captureToken == token else { return }
+                self.session.fail(KeyboardFailure(code: "mic", message: self.friendlyMicError(error)))
+                self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
             }
-            guard self.captureToken == token else { return }
-            self.session.fail(KeyboardFailure(code: "host", message: "Local Dictation isn't reachable. Open the app, then tap the mic."))
-            self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
         }
     }
 
@@ -191,25 +195,28 @@ final class KeyboardViewController: UIInputViewController {
 
     private func stopRecording() {
         captureToken = UUID()
+        connecting = false
         _ = session.handle(.endHold)
         keyboardView?.apply(session.snapshot, holdToTalk: false)
         Task { [weak self] in
             guard let self else { return }
-            if await DictationClient.health() {
-                do {
-                    let text = try await DictationClient.stop()
-                    self.completeTranscription(text)
-                } catch {
-                    self.session.fail(KeyboardFailure(code: "speech", message: error.localizedDescription))
-                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
+            do {
+                for _ in 0..<20 {
+                    if await DictationClient.isListening() { break }
+                    try? await Task.sleep(nanoseconds: 80_000_000)
                 }
-                return
+                let text = try await DictationClient.stop()
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    self.session.fail(KeyboardFailure(code: "empty", message: "Didn't catch that. Tap, speak, then tap again."))
+                    self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
+                    return
+                }
+                self.completeTranscription(trimmed)
+            } catch {
+                self.session.fail(KeyboardFailure(code: "speech", message: error.localizedDescription))
+                self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
             }
-            if self.usingLiveCapture {
-                self.capture.endAudio()
-                return
-            }
-            self.transcribeFile(self.capture.stop())
         }
     }
 

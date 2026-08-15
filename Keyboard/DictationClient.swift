@@ -6,6 +6,11 @@ enum DictationClient {
         var text: String?
         var error: String?
         var listening: Bool?
+        var armed: Bool?
+    }
+
+    static func isListening() async -> Bool {
+        (try? await send(path: "/health", timeout: 0.8))?.listening == true
     }
 
     static func health() async -> Bool {
