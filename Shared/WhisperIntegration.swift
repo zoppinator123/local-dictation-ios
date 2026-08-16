@@ -490,6 +490,39 @@ public final class TakeGenerationGuard: @unchecked Sendable {
     }
 }
 
+public enum ListenerLifecycleState: Sendable {
+    case ready
+    case failed
+    case cancelled
+}
+
+public struct ListenerLifecycleGuard: Sendable {
+    private var generation: UInt64 = 0
+
+    public init() {}
+
+    @discardableResult
+    public mutating func beginReplacement() -> UInt64 {
+        generation &+= 1
+        return generation
+    }
+
+    public mutating func invalidate() {
+        generation &+= 1
+    }
+
+    public func isCurrent(_ candidate: UInt64) -> Bool {
+        generation == candidate
+    }
+
+    public static func isTerminal(_ state: ListenerLifecycleState) -> Bool {
+        switch state {
+        case .failed, .cancelled: true
+        case .ready: false
+        }
+    }
+}
+
 public enum LocalhostAuthentication {
     public static let headerName = "X-Local-Dictation-Token"
 

@@ -17,6 +17,7 @@ final class DictationDaemon: ObservableObject {
 
     private var session = HostCaptureSession()
     private var listener: NWListener?
+    private var listenerLifecycle = ListenerLifecycleGuard()
     private var engine: AVAudioEngine?
     private var tapInstalled = false
     private let pcmBox = PCMClipBuffer()
@@ -40,7 +41,7 @@ final class DictationDaemon: ObservableObject {
 
     func start() {
         event("daemon start")
-        startAuthenticatedListener()
+        restartAuthenticatedListener()
         retainInBackground()
     }
 
@@ -260,6 +261,7 @@ final class DictationDaemon: ObservableObject {
                 authToken = try authTokenStore.loadOrCreate()
                 event("localhost authentication ready access_group=\(SharedAuthTokenStore.accessGroup)")
             } catch {
+                listenerLifecycle.invalidate()
                 listener?.cancel()
                 listener = nil
                 lastError = error.localizedDescription
@@ -270,17 +272,37 @@ final class DictationDaemon: ObservableObject {
         startListener()
     }
 
+    private func restartAuthenticatedListener() {
+        listenerLifecycle.invalidate()
+        listener?.stateUpdateHandler = nil
+        listener?.cancel()
+        listener = nil
+        startAuthenticatedListener()
+    }
+
     private func startListener() {
         guard listener == nil else { return }
         do {
             let port = NWEndpoint.Port(rawValue: Self.port)!
             let parameters = NWParameters.tcp
+            parameters.allowLocalEndpointReuse = true
             parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: port)
             let listener = try NWListener(using: parameters)
+            let generation = listenerLifecycle.beginReplacement()
             listener.stateUpdateHandler = { [weak self] state in
                 Task { @MainActor in
-                    self?.event("listener \(String(describing: state))")
-                    if case .failed = state { self?.listener = nil }
+                    guard let self, self.listenerLifecycle.isCurrent(generation) else { return }
+                    self.event("listener \(String(describing: state))")
+                    let lifecycleState: ListenerLifecycleState?
+                    switch state {
+                    case .failed: lifecycleState = .failed
+                    case .cancelled: lifecycleState = .cancelled
+                    case .ready: lifecycleState = .ready
+                    default: lifecycleState = nil
+                    }
+                    if let lifecycleState, ListenerLifecycleGuard.isTerminal(lifecycleState) {
+                        self.listener = nil
+                    }
                 }
             }
             listener.newConnectionHandler = { [weak self] connection in

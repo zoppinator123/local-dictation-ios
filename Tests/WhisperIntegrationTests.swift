@@ -176,6 +176,17 @@ enum WhisperIntegrationSuite {
         try expectFalse(guardBox.isCurrent(takeGeneration))
     }
 
+    static func listenerReplacementInvalidatesStaleCallbacks() async throws {
+        var lifecycle = ListenerLifecycleGuard()
+        let staleListener = lifecycle.beginReplacement()
+        let replacement = lifecycle.beginReplacement()
+        try expectFalse(lifecycle.isCurrent(staleListener))
+        try expect(lifecycle.isCurrent(replacement))
+        try expect(ListenerLifecycleGuard.isTerminal(.failed))
+        try expect(ListenerLifecycleGuard.isTerminal(.cancelled))
+        try expectFalse(ListenerLifecycleGuard.isTerminal(.ready))
+    }
+
     static func cancellationNeverFallsBack() async throws {
         let fallbackCalls = LockedCounter()
         let operation = Task {

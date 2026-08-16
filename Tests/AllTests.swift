@@ -74,6 +74,7 @@ public func allTests() -> [RegisteredTest] {
         RegisteredTest(name: "whisper.inferenceFallback", body: WhisperIntegrationSuite.inferenceErrorFallsBack),
         RegisteredTest(name: "whisper.timeoutFallback", body: WhisperIntegrationSuite.timeoutFallsBack),
         RegisteredTest(name: "whisper.offDiscardsStale", body: WhisperIntegrationSuite.offDuringDecodeDiscardsStaleResult),
+        RegisteredTest(name: "whisper.listenerReplacement", body: WhisperIntegrationSuite.listenerReplacementInvalidatesStaleCallbacks),
         RegisteredTest(name: "whisper.cancellationNoFallback", body: WhisperIntegrationSuite.cancellationNeverFallsBack),
         RegisteredTest(name: "whisper.realtimeRawPCM", body: WhisperIntegrationSuite.realtimeBufferCopiesRawPCM),
         RegisteredTest(name: "whisper.localhostAuth", body: WhisperIntegrationSuite.localhostAuthentication),
