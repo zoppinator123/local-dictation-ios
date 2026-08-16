@@ -14,8 +14,12 @@ enum CleanupSuite {
     }
 
     static func polishedPunctuation() async throws {
-        let cleaned = DeterministicCleanup().clean("um this is ready")
-        try expectEqual(cleaned, "This is ready.")
+        let unpunctuated = DeterministicCleanup().clean("um this is ready")
+        try expectEqual(unpunctuated, "This is ready")
+        let automaticPeriods = DeterministicCleanup().clean("first thought. second thought.")
+        try expectEqual(automaticPeriods, "First thought. second thought")
+        let dictatedQuestion = DeterministicCleanup().clean("is this ready?")
+        try expectEqual(dictatedQuestion, "Is this ready?")
     }
 
     static func emailStyle() async throws {

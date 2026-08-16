@@ -1,7 +1,6 @@
 import AVFoundation
 import Foundation
 import Network
-import Speech
 import UIKit
 
 /// Flow session: hardware starts in the foreground and stays up.
@@ -20,44 +19,76 @@ final class DictationDaemon: ObservableObject {
     private var listener: NWListener?
     private var engine: AVAudioEngine?
     private var tapInstalled = false
-    private let speechBox = SpeechBox()
+    private let pcmBox = PCMClipBuffer()
+    private let transcriptionService = TranscriptionService()
+    private let takeGeneration = TakeGenerationGuard()
+    private let authTokenStore = SharedAuthTokenStore()
+    private var authToken: String?
     private var retainTask: UIBackgroundTaskIdentifier = .invalid
     private var commandBusy = false
-    private var generation: UInt64 = 0
+    private var activationTask: Task<Void, Never>?
+    private var activationGeneration: UInt64 = 0
     private let networkQueue = DispatchQueue(label: "com.jackzoppa.LocalDictation.listener", qos: .userInitiated)
+    private var notificationTokens: [NSObjectProtocol] = []
 
-    private init() {}
+    private init() {
+        transcriptionService.onDiagnostic = { [weak self] message in
+            self?.event(message)
+        }
+        observeSafetyNotifications()
+    }
 
     func start() {
         event("daemon start")
-        startListener()
+        startAuthenticatedListener()
         retainInBackground()
     }
 
     func primeSession() {
-        generation &+= 1
+        takeGeneration.advance()
         event("Start session tapped")
-        startListener()
+        startAuthenticatedListener()
         retainInBackground()
         if engine?.isRunning != true || !tapInstalled {
             _ = session.micOff()
         }
         apply(session.startSession(foreground: true))
+        transcriptionService.prepareForSession()
+    }
+
+    func schedulePrimeSession() {
+        activationGeneration &+= 1
+        let generation = activationGeneration
+        activationTask?.cancel()
+        activationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            guard let self, self.activationGeneration == generation else { return }
+            self.activationTask = nil
+            self.primeSession()
+        }
     }
 
     func shutdownAudio() {
         event("OFF requested")
-        generation &+= 1
+        activationGeneration &+= 1
+        activationTask?.cancel()
+        activationTask = nil
+        let offGeneration = takeGeneration.advance()
         commandBusy = false
         _ = session.micOff()
-        speechBox.cancel()
+        pcmBox.cancelClip()
+        transcriptionService.cancelAndUnload()
         removeTap()
         engine?.stop()
         engine?.reset()
         engine = nil
         endRetain()
         publish()
-        deactivateAudioSession(attempt: 1, targetGeneration: generation)
+        deactivateAudioSession(attempt: 1, targetGeneration: offGeneration)
     }
 
     func startRecording() async throws {
@@ -76,17 +107,13 @@ final class DictationDaemon: ObservableObject {
         case .success:
             break
         }
-        guard speechBox.begin() else {
-            session.failTranscription("Speech recognition is unavailable. Check your connection and Speech permission.")
-            publish()
-            throw SpeechCaptureError.engineStartFailed("Speech recognition is unavailable")
-        }
+        pcmBox.beginClip()
         publish()
     }
 
     func stopRecording() async throws -> String {
         event("/stop received")
-        let takeGeneration = generation
+        let stopGeneration = takeGeneration.snapshot()
         switch session.stopClip() {
         case .failure:
             publish()
@@ -95,17 +122,36 @@ final class DictationDaemon: ObservableObject {
             break
         }
         publish()
-        let text = await speechBox.finish(timeout: 3.5)
-        guard generation == takeGeneration else {
-            event("discarded stale /stop after OFF")
-            return ""
+        let clip = pcmBox.takeClip()
+        event(
+            "take captured source_samples=\(clip.frameCount) source_rate=\(Int(clip.sampleRate ?? 0)) channels=\(clip.channelCount) overflow=\(clip.overflowed)"
+        )
+        do {
+            let resampleStarted = Date()
+            let converted = try PCMResampler.convertToWhisperPCM(clip)
+            let resampleMS = Int(Date().timeIntervalSince(resampleStarted) * 1_000)
+            event(
+                "take resample_ms=\(resampleMS) source_samples=\(converted.sourceFrameCount) source_rate=\(Int(converted.sourceSampleRate)) source_channels=\(converted.sourceChannelCount) output_samples=\(converted.samples.count) output_rate=\(converted.sampleRate)"
+            )
+            let outcome = try await transcriptionService.transcribe(samples: converted.samples)
+            guard takeGeneration.isCurrent(stopGeneration) else {
+                event("discarded stale /stop after OFF")
+                return ""
+            }
+            let text = outcome.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            session.finishTranscription(text)
+            publish()
+            return text
+        } catch {
+            guard takeGeneration.isCurrent(stopGeneration) else {
+                event("discarded failed stale /stop after OFF")
+                return ""
+            }
+            session.failTranscription(error.localizedDescription)
+            publish()
+            event("take failed primary=WhisperKit fallback=AppleSpeech reason=\(error.localizedDescription)")
+            throw error
         }
-        session.finishTranscription(text)
-        publish()
-        if !text.isEmpty {
-            UIPasteboard.general.string = ClipboardDictation.encode(text)
-        }
-        return text
     }
 
     private func apply(_ result: Result<HostCaptureCommand, HostCaptureError>) {
@@ -153,14 +199,14 @@ final class DictationDaemon: ObservableObject {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        let hardware = input.outputFormat(forBus: 0)
+        let hardware = input.inputFormat(forBus: 0)
         guard hardware.channelCount > 0, hardware.sampleRate > 0 else {
             try? audio.setActive(false, options: .notifyOthersOnDeactivation)
             throw SpeechCaptureError.engineStartFailed("Microphone input is not ready.")
         }
         self.engine = engine
         do {
-            try installPersistentTap(format: hardware)
+            try installPersistentTap()
             engine.prepare()
             try engine.start()
         } catch {
@@ -174,7 +220,7 @@ final class DictationDaemon: ObservableObject {
 #endif
     }
 
-    private func installPersistentTap(format: AVAudioFormat) throws {
+    private func installPersistentTap() throws {
         guard let engine else {
             throw SpeechCaptureError.engineStartFailed("Audio engine is not running")
         }
@@ -182,14 +228,22 @@ final class DictationDaemon: ObservableObject {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
-        let handler = Self.makeAudioTapHandler(speechBox)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format, block: handler)
+        let handler = Self.makeAudioTapHandler(pcmBox)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil, block: handler)
         tapInstalled = true
     }
 
-    nonisolated private static func makeAudioTapHandler(_ speechBox: SpeechBox) -> AVAudioNodeTapBlock {
+    nonisolated private static func makeAudioTapHandler(_ pcmBox: PCMClipBuffer) -> AVAudioNodeTapBlock {
         { buffer, _ in
-            speechBox.append(buffer)
+            guard buffer.format.commonFormat == .pcmFormatFloat32,
+                  let data = buffer.floatChannelData else { return }
+            pcmBox.appendFloat32(
+                channelData: data,
+                frameCount: Int(buffer.frameLength),
+                channelCount: Int(buffer.format.channelCount),
+                sampleRate: buffer.format.sampleRate,
+                interleaved: buffer.format.isInterleaved
+            )
         }
     }
 
@@ -198,6 +252,22 @@ final class DictationDaemon: ObservableObject {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
+    }
+
+    private func startAuthenticatedListener() {
+        if authToken == nil {
+            do {
+                authToken = try authTokenStore.loadOrCreate()
+                event("localhost authentication ready access_group=\(SharedAuthTokenStore.accessGroup)")
+            } catch {
+                listener?.cancel()
+                listener = nil
+                lastError = error.localizedDescription
+                event("localhost authentication failed closed: \(error.localizedDescription)")
+                return
+            }
+        }
+        startListener()
     }
 
     private func startListener() {
@@ -234,15 +304,37 @@ final class DictationDaemon: ObservableObject {
                 return
             }
             Task { @MainActor in
+                guard LocalhostAuthentication.isAuthorized(request: request, expectedToken: self.authToken) else {
+                    self.event("localhost authentication rejected")
+                    let body = self.json(["ok": false, "error": "unauthorized"])
+                    self.sendHTTP(status: "401 Unauthorized", body: body, on: connection)
+                    return
+                }
                 let route = HostCaptureRoute.parseHTTP(request)
+                guard route != .unknown else {
+                    let body = self.json(["ok": false, "error": "unknown"])
+                    self.sendHTTP(status: "404 Not Found", body: body, on: connection)
+                    return
+                }
+                guard LocalhostRequestPolicy.isAllowed(request: request, route: route) else {
+                    let body = self.json(["ok": false, "error": "method not allowed"])
+                    self.sendHTTP(status: "405 Method Not Allowed", body: body, on: connection)
+                    return
+                }
                 self.event("request \(route.rawValue)")
                 let body = await self.handle(request)
-                let response = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)".utf8)
-                connection.send(content: response, completion: .contentProcessed { _ in
-                    connection.cancel()
-                })
+                self.sendHTTP(status: "200 OK", body: body, on: connection)
             }
         }
+    }
+
+    private func sendHTTP(status: String, body: String, on connection: NWConnection) {
+        let response = Data(
+            "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)".utf8
+        )
+        connection.send(content: response, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
     }
 
     private func handle(_ request: String) async -> String {
@@ -318,7 +410,7 @@ final class DictationDaemon: ObservableObject {
     }
 
     private func deactivateAudioSession(attempt: Int, targetGeneration: UInt64) {
-        guard generation == targetGeneration else { return }
+        guard takeGeneration.isCurrent(targetGeneration) else { return }
         let audio = AVAudioSession.sharedInstance()
         do {
             try audio.setActive(false, options: .notifyOthersOnDeactivation)
@@ -355,88 +447,33 @@ final class DictationDaemon: ObservableObject {
             }
         }
     }
-}
 
-private final class SpeechBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
-    private var latest = ""
-    private var isFinal = false
-
-    func begin() -> Bool {
-        cancel()
-        let recognizer = SFSpeechRecognizer(locale: Locale.autoupdatingCurrent)
-            ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-        guard let recognizer, recognizer.isAvailable else { return false }
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = false
-        lock.lock()
-        self.request = request
-        latest = ""
-        isFinal = false
-        lock.unlock()
-        let recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self else { return }
-            self.lock.lock()
-            if let result {
-                self.latest = result.bestTranscription.formattedString
-                if result.isFinal { self.isFinal = true }
+    private func observeSafetyNotifications() {
+        let center = NotificationCenter.default
+        notificationTokens.append(
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { [weak self] note in
+                guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
+                Task { @MainActor in
+                    guard let self,
+                          let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+                    self.event("audio interruption type=\(type == .began ? "began" : "ended")")
+                    if type == .began { self.shutdownAudio() }
+                }
             }
-            if error != nil { self.isFinal = true }
-            self.lock.unlock()
-        }
-        lock.lock()
-        task = recognitionTask
-        lock.unlock()
-        return true
-    }
-
-    func append(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
-        let request = request
-        lock.unlock()
-        request?.append(buffer)
-    }
-
-    func finish(timeout: TimeInterval) async -> String {
-        endRequest()
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            let snap = snapshot()
-            if snap.done {
-                cancel()
-                return snap.text
+        )
+        notificationTokens.append(
+            center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: nil) { [weak self] _ in
+                Task { @MainActor in
+                    self?.event("thermal state changed raw=\(ProcessInfo.processInfo.thermalState.rawValue)")
+                }
             }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-        let text = snapshot().text
-        cancel()
-        return text
-    }
-
-    func cancel() {
-        lock.lock()
-        let request = request
-        let task = task
-        self.request = nil
-        self.task = nil
-        isFinal = false
-        lock.unlock()
-        request?.endAudio()
-        task?.cancel()
-    }
-
-    private func endRequest() {
-        lock.lock()
-        request?.endAudio()
-        lock.unlock()
-    }
-
-    private func snapshot() -> (done: Bool, text: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (isFinal, latest)
+        )
+        notificationTokens.append(
+            center.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { [weak self] _ in
+                Task { @MainActor in
+                    self?.event("memory warning armed=\(self?.isArmed == true)")
+                }
+            }
+        )
     }
 }

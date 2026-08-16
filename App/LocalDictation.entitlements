@@ -6,5 +6,9 @@
 	<array>
 		<string>group.com.jackzoppa.LocalDictation</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>Q4MSNRURZ4.com.jackzoppa.LocalDictation.shared</string>
+	</array>
 </dict>
 </plist>

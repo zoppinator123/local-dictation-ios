@@ -16,6 +16,7 @@ final class KeyboardViewController: UIInputViewController {
     private var lastCaptureError: String?
     private var captureToken = UUID()
     private var usingLiveCapture = false
+    private var hostSessionArmed = false
 
     private var appGroupDirectory: URL {
         AppGroupPaths.containerURL() ?? FileManager.default.temporaryDirectory
@@ -37,8 +38,7 @@ final class KeyboardViewController: UIInputViewController {
         chrome.onSpace = { [weak self] in self?.textDocumentProxy.insertText(" ") }
         chrome.onReturn = { [weak self] in self?.textDocumentProxy.insertText("\n") }
         chrome.onNextKeyboard = { [weak self] in self?.advanceToNextInputMode() }
-        chrome.onOpenApp = { [weak self] in self?.openHost(AppRoute.root.url) }
-        chrome.onMicOff = { [weak self] in self?.turnMicOff() }
+        chrome.onSessionToggle = { [weak self] in self?.toggleHostSession() }
         view.addSubview(chrome)
         NSLayoutConstraint.activate([
             chrome.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -50,6 +50,7 @@ final class KeyboardViewController: UIInputViewController {
         keyboardView = chrome
         persistFullAccessFlag()
         refreshSession()
+        refreshHostSessionStatus()
         consumeSharedTranscriptIfNeeded()
         startPollingSharedStore()
     }
@@ -58,6 +59,7 @@ final class KeyboardViewController: UIInputViewController {
         super.viewWillAppear(animated)
         persistFullAccessFlag()
         refreshSession()
+        refreshHostSessionStatus()
         consumeSharedTranscriptIfNeeded()
     }
 
@@ -132,6 +134,7 @@ final class KeyboardViewController: UIInputViewController {
                     self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
                     return
                 }
+                self.setHostSessionArmed(true)
                 self.keyboardView?.apply(self.session.snapshot, holdToTalk: false)
             } catch {
                 guard self.captureToken == token else { return }
@@ -148,7 +151,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = false
+        request.requiresOnDeviceRecognition = true
         do {
             try await capture.startLive(appending: request)
             usingLiveCapture = true
@@ -234,7 +237,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         self.recognizer = recognizer
         let request = SFSpeechURLRecognitionRequest(url: url)
-        request.requiresOnDeviceRecognition = false
+        request.requiresOnDeviceRecognition = true
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
                 defer { try? FileManager.default.removeItem(at: url) }
@@ -286,11 +289,6 @@ final class KeyboardViewController: UIInputViewController {
             session.fail(KeyboardFailure(code: "host", message: payload.errorMessage ?? "Dictation failed"))
             lastInsertedGeneration = payload.generation
         }
-        if let clip = UIPasteboard.general.string, let transcript = ClipboardDictation.decode(clip) {
-            insertDictation(transcript)
-            UIPasteboard.general.string = ""
-            session.finishInsertion()
-        }
         keyboardView?.apply(session.snapshot, holdToTalk: false)
     }
 
@@ -314,10 +312,33 @@ final class KeyboardViewController: UIInputViewController {
         Task { [weak self] in
             guard let self else { return }
             let turnedOff = await DictationClient.turnOff()
+            self.setHostSessionArmed(false)
             if !turnedOff {
                 self.openHost(AppRoute.root.url)
             }
         }
+    }
+
+    private func toggleHostSession() {
+        if hostSessionArmed {
+            turnMicOff()
+        } else {
+            keyboardView?.setPartial("Opening Local Dictation to start session…")
+            openHost(KeyboardHostSessionControl.activationRoute.url)
+        }
+    }
+
+    private func refreshHostSessionStatus() {
+        Task { [weak self] in
+            guard let self else { return }
+            let health = await DictationClient.health()
+            self.setHostSessionArmed(health?.ok == true && health?.armed == true)
+        }
+    }
+
+    private func setHostSessionArmed(_ armed: Bool) {
+        hostSessionArmed = armed
+        keyboardView?.setHostSessionActive(armed)
     }
 
     private func openHost(_ url: URL) {

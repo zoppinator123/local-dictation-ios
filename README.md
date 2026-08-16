@@ -17,7 +17,7 @@ This is an independent greenfield app. It does **not** fork Wispr Flow, VoiceInk
 - Full Access + Microphone + Speech Recognition setup in the host app
 - Custom vocabulary (Haven, StaydOS, names)
 - Writing styles: Raw, Polished, Email
-- On-device speech recognition; no account or API key
+- Bundled on-device WhisperKit `base.en`; no account or API key
 
 ## What it does not copy
 
@@ -25,13 +25,15 @@ Wispr Flow’s cloud rewriting, style-learning, quiet-room models, and auto-swit
 
 ## How dictation works on iOS
 
-Apple’s keyboard sandbox is the hard part:
+Apple’s keyboard sandbox cannot start fresh microphone hardware after its host app is suspended:
 
-1. The keyboard requests **Full Access** (`RequestsOpenAccess`).
-2. When the OS allows it, the keyboard records with `AVAudioEngine` and transcribes with on-device `SFSpeechRecognizer`.
-3. If in-keyboard audio is blocked, the keyboard opens the host app (`localdictation://dictate`), which records and writes the cleaned transcript into the App Group. The keyboard inserts it when you return.
+1. Open Local Dictation and tap **Start Session** while the host is foregrounded.
+2. The host owns a persistent `AVAudioEngine` input tap and preloads the bundled WhisperKit model.
+3. The keyboard is a thin authenticated localhost client. `/start` opens a logical clip; `/stop` sends the buffered PCM to host-side WhisperKit.
+4. The host returns raw text over `127.0.0.1`; the keyboard cleans it once and inserts it through `textDocumentProxy`.
+5. Apple Speech remains an on-device fallback for bounded model/inference failures. **Mic off** immediately tears down the host audio session.
 
-iOS 26 can fail to auto-return to the previous app after an extension `openURL`. The host app tells you to switch back; the keyboard then inserts automatically.
+Host and keyboard share only a random per-install Keychain token. No transcript or model is stored in the keyboard extension.
 
 ## Requirements
 
@@ -49,7 +51,7 @@ This Mac mini currently has Command Line Tools only, so the **shared core is ver
 3. iOS Settings › General › Keyboard › Keyboards › **Add New Keyboard** › Local Dictation.
 4. Tap Local Dictation and enable **Allow Full Access**.
 5. Open Messages (or any app), hold the globe, choose Local Dictation.
-6. Hold the red microphone and speak.
+6. Tap the microphone, speak, then tap again to insert.
 
 ## Build
 
@@ -64,15 +66,15 @@ xcodegen generate
 open LocalDictationIOS.xcodeproj
 ```
 
-Select your Team in Signing & Capabilities for both `LocalDictation` and `LocalDictationKeyboard`. The App Group is `group.com.jackzoppa.LocalDictation`.
+Select Team `Q4MSNRURZ4` in Signing & Capabilities for both `LocalDictation` and `LocalDictationKeyboard`. Both targets use App Group `group.com.jackzoppa.LocalDictation` for settings/vocabulary and Keychain access group `Q4MSNRURZ4.com.jackzoppa.LocalDictation.shared` for localhost authentication.
 
 ## Layout
 
-- `Shared/` — cleanup, vocabulary, keyboard session, App Group store
-- `App/` — host onboarding, permissions, fallback recorder
-- `Keyboard/` — custom keyboard UI + in-keyboard dictation
+- `Shared/` — cleanup, PCM buffering/resampling, state machines, authentication helpers
+- `App/` — host audio engine, bundled WhisperKit inference, on-device Apple Speech fallback
+- `Keyboard/` — custom keyboard UI, localhost client, and caret insertion
 - `Tests/` — SwiftPM harness for the shared core
 
 ## Privacy
 
-Audio is used only for the current dictation. Transcripts are not stored as history. Diagnostics are not collected. See `docs/privacy.md`.
+Audio is used only for the current dictation. Transcripts are not stored as history. Device-local diagnostics record state and timing but never audio or dictated text. See `docs/privacy.md`.

@@ -33,6 +33,7 @@ let package = Package(
                 "SharedStoreTests.swift",
                 "VocabularyTests.swift",
                 "HostCaptureSessionTests.swift",
+                "WhisperIntegrationTests.swift",
             ]
         ),
         .executableTarget(
@@ -50,6 +51,7 @@ let package = Package(
                 "SharedStoreTests.swift",
                 "VocabularyTests.swift",
                 "HostCaptureSessionTests.swift",
+                "WhisperIntegrationTests.swift",
             ],
             sources: ["TestRunnerMain.swift"]
         ),

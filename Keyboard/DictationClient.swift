@@ -29,7 +29,12 @@ enum DictationClient {
     }
 
     static func stop() async throws -> String {
-        let response = try await send(path: "/stop", timeout: 12)
+        let response: Response
+        do {
+            response = try await send(path: "/stop", timeout: 12)
+        } catch {
+            throw SpeechCaptureError.engineStartFailed(KeyboardTransportPolicy.sessionExpiredMessage)
+        }
         guard response.ok else {
             throw SpeechCaptureError.engineStartFailed(response.error ?? "Session stop failed")
         }
@@ -41,6 +46,10 @@ enum DictationClient {
         return response.ok
     }
 
+    static func health() async -> Response? {
+        try? await send(path: "/health", timeout: 3)
+    }
+
     private static func send(path: String, timeout: TimeInterval) async throws -> Response {
         let config = URLSessionConfiguration.ephemeral
         config.waitsForConnectivity = false
@@ -49,7 +58,11 @@ enum DictationClient {
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: config)
         var request = URLRequest(url: URL(string: "http://127.0.0.1:18765\(path)")!)
-        request.httpMethod = "GET"
+        guard let token = try SharedAuthTokenStore().load() else {
+            throw SpeechCaptureError.engineStartFailed("Reopen Local Dictation to secure this session.")
+        }
+        request.httpMethod = path == "/health" ? "GET" : "POST"
+        request.setValue(token, forHTTPHeaderField: LocalhostAuthentication.headerName)
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
         let (data, _) = try await session.data(for: request)

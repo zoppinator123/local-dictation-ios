@@ -60,7 +60,7 @@ public struct DeterministicCleanup: Sendable {
         case .raw:
             return output
         case .polished:
-            return sentenceCase(ensureTerminalPunctuation(output))
+            return sentenceCase(removeAutomaticTerminalPeriod(output))
         case .email:
             return formatEmail(output)
         }
@@ -134,6 +134,12 @@ public struct DeterministicCleanup: Sendable {
         guard !trimmed.isEmpty else { return trimmed }
         if let last = trimmed.last, ".!?".contains(last) { return trimmed }
         return trimmed + "."
+    }
+
+    public func removeAutomaticTerminalPeriod(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix("."), !trimmed.hasSuffix("...") else { return trimmed }
+        return String(trimmed.dropLast())
     }
 
     public func formatEmail(_ text: String) -> String {

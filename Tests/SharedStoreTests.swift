@@ -32,7 +32,7 @@ enum PipelineSuite {
     static func insertsCleanedText() async throws {
         let pipeline = TranscriptPipeline()
         let text = pipeline.process("um book the haven cabin", vocabulary: ["haven": "Haven"])
-        try expectEqual(text, "Book the Haven cabin.")
+        try expectEqual(text, "Book the Haven cabin")
         try expect(pipeline.shouldInsert(text))
     }
 
@@ -79,7 +79,7 @@ enum PipelineSuite {
         let once = pipeline.process("um hello there", vocabulary: [:])
         let twice = pipeline.process(once, vocabulary: [:])
         try expectEqual(once, twice)
-        try expectEqual(once, "Hello there.")
+        try expectEqual(once, "Hello there")
     }
 }
 
@@ -100,5 +100,18 @@ enum ReadinessSuite {
         readiness.fullAccessGranted = false
         try expectFalse(readiness.isReady)
         try expect(readiness.canAttemptRecording)
+    }
+
+    static func speechFallbackIsOffline() async throws {
+        let detail = KeyboardReadiness().steps.first { $0.id == "speech" }?.detail ?? ""
+        try expect(detail.localizedCaseInsensitiveContains("on-device"))
+        try expectFalse(detail.localizedCaseInsensitiveContains("server"))
+        try expectFalse(detail.localizedCaseInsensitiveContains("upload"))
+    }
+
+    static func hostSessionControl() async throws {
+        try expectEqual(KeyboardHostSessionControl.title(isArmed: true), "Session off")
+        try expectEqual(KeyboardHostSessionControl.title(isArmed: false), "Session on")
+        try expectEqual(KeyboardHostSessionControl.activationRoute, AppRoute.dictate)
     }
 }

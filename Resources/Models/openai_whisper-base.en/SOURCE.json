@@ -1,0 +1,18 @@
+{
+  "repository": "argmaxinc/whisperkit-coreml",
+  "revision": "97a5bf9bbc74c7d9c12c755d04dea59e672e3808",
+  "folder": "openai_whisper-base.en",
+  "tokenizer": {
+    "repository": "openai/whisper-base.en",
+    "revision": "911407f4214e0e1d82085af863093ec0b66f9cd6",
+    "files": [
+      "added_tokens.json",
+      "merges.txt",
+      "normalizer.json",
+      "special_tokens_map.json",
+      "tokenizer.json",
+      "tokenizer_config.json",
+      "vocab.json"
+    ]
+  }
+}

@@ -9,11 +9,11 @@ final class KeyboardChromeView: UIView {
     var onSpace: (() -> Void)?
     var onReturn: (() -> Void)?
     var onNextKeyboard: (() -> Void)?
-    var onOpenApp: (() -> Void)?
-    var onMicOff: (() -> Void)?
+    var onSessionToggle: (() -> Void)?
 
     private let statusLabel = UILabel()
     private let micButton = UIButton(type: .system)
+    private let sessionButton = UIButton(type: .system)
     private let stack = UIStackView()
     private var shifted = false
     private var holdToTalk = false
@@ -79,6 +79,11 @@ final class KeyboardChromeView: UIView {
         statusLabel.text = text
     }
 
+    func setHostSessionActive(_ active: Bool) {
+        sessionButton.setTitle(KeyboardHostSessionControl.title(isArmed: active), for: .normal)
+        sessionButton.tintColor = active ? .systemRed : .systemGreen
+    }
+
     @objc private func micTapped() {
         onMicTap?()
     }
@@ -122,8 +127,12 @@ final class KeyboardChromeView: UIView {
         let space = actionButton("space") { [weak self] in self?.onSpace?() }
         row.addArrangedSubview(space)
         row.addArrangedSubview(actionButton("return") { [weak self] in self?.onReturn?() })
-        row.addArrangedSubview(actionButton("App") { [weak self] in self?.onOpenApp?() })
-        row.addArrangedSubview(actionButton("Mic off") { [weak self] in self?.onMicOff?() })
+        sessionButton.setTitle(KeyboardHostSessionControl.title(isArmed: false), for: .normal)
+        sessionButton.backgroundColor = .tertiarySystemFill
+        sessionButton.layer.cornerRadius = 6
+        sessionButton.tintColor = .systemGreen
+        sessionButton.addAction(UIAction { [weak self] _ in self?.onSessionToggle?() }, for: .touchUpInside)
+        row.addArrangedSubview(sessionButton)
         space.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
         return row
     }

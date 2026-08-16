@@ -64,7 +64,7 @@ final class HostDictationController: ObservableObject {
             return
         }
         let request = SFSpeechURLRecognitionRequest(url: url)
-        request.requiresOnDeviceRecognition = false
+        request.requiresOnDeviceRecognition = true
         statusTitle = "Transcribing…"
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
@@ -86,9 +86,7 @@ final class HostDictationController: ObservableObject {
             persister: FileVocabularyPersister(fileURL: directory.appendingPathComponent(AppGroupPaths.vocabularyFileName))
         ).replacements()
         let cleaned = TranscriptPipeline(options: CleanupOptions(style: settings.style)).process(raw, vocabulary: vocabulary)
-        try? store.save(SharedDictationPayload(status: .ready, transcript: cleaned, generation: UInt64(Date().timeIntervalSince1970), updatedAt: Date()))
-        UIPasteboard.general.string = ClipboardDictation.encode(cleaned)
-        statusTitle = "Saved. Switch back to Messages — text will insert."
+        statusTitle = "Transcription complete."
         isRecording = false
         partialText = cleaned
         stopEngine()

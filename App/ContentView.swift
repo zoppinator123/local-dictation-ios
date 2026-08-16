@@ -6,8 +6,6 @@ struct ContentView: View {
     @StateObject private var store = HostSettingsController()
     @StateObject private var hostDictation = HostDictationController()
     @ObservedObject private var daemon = DictationDaemon.shared
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var hasBackgrounded = false
 
     var body: some View {
         NavigationStack {
@@ -48,18 +46,14 @@ struct ContentView: View {
         }
         .onOpenURL { url in
             store.refresh()
-            if url.absoluteString.hasPrefix(AppRoute.dictate.rawValue) || url.absoluteString.hasPrefix(AppRoute.root.rawValue) {
+            if url.absoluteString.hasPrefix(AppRoute.dictate.rawValue) {
+                DictationDaemon.shared.start()
+                DictationDaemon.shared.schedulePrimeSession()
+            } else if url.absoluteString.hasPrefix(AppRoute.root.rawValue) {
                 DictationDaemon.shared.start()
             }
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
-                hasBackgrounded = true
-            } else if phase == .active, hasBackgrounded {
-                hasBackgrounded = false
-                daemon.shutdownAudio()
-            }
-        }
+
         .alert("Microphone and Speech", isPresented: $store.showingPermissionAlert) {
             Button("Open Settings") { store.openSettings() }
             Button("Cancel", role: .cancel) {}
